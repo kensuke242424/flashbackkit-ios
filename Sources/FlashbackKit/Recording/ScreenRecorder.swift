@@ -33,11 +33,14 @@ final class ScreenRecorder {
         self.ring = ring
         isCapturing = true
 
-        recorder.startCapture(handler: { sampleBuffer, bufferType, error in
-            // @Sendable・背景キュー。CMSampleBuffer は非 Sendable なので ingest 内で box 化。
+        recorder.startCapture(handler: { @Sendable sampleBuffer, bufferType, error in
+            // 背景スレッドで呼ばれる。@Sendable で main-actor 隔離を外すこと。
+            // 付けないとクロージャが @MainActor 隔離を継承し、ReplayKit が背景スレッドで
+            // 呼んだ瞬間に "Block was expected to execute on queue [main-thread]" で trap する。
+            // CMSampleBuffer は非 Sendable なので ingest 内で box 化して serial queue へ渡す。
             guard error == nil else { return }
             ring.ingest(sampleBuffer, type: bufferType)
-        }, completionHandler: { error in
+        }, completionHandler: { @Sendable error in
             guard let error else { return }
             FlashbackLog.lifecycle.error("startCapture 失敗: \(error.localizedDescription, privacy: .public)")
             Task { @MainActor [weak self] in
@@ -112,7 +115,8 @@ final class SegmentRingWriter: @unchecked Sendable {
             startNewSegment(firstSample: sb, at: pts)
         }
 
-        guard let input = videoInput, input.isReadyForMoreMediaData else { return }
+        guard let writer, writer.status == .writing,
+              let input = videoInput, input.isReadyForMoreMediaData else { return }
         input.append(sb)                                   // 未準備時はフレーム破棄（PoC 許容）
     }
 
