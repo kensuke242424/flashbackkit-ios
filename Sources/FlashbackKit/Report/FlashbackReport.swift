@@ -1,7 +1,7 @@
 import Foundation
 
 /// Flashback から生成される構造化バグレポート。
-public struct FlashbackReport {
+public struct FlashbackReport: Sendable {
     public var title: String
     public var reproductionSteps: [String]
     public var actualResult: String

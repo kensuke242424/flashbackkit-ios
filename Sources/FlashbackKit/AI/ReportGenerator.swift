@@ -1,7 +1,7 @@
 import Foundation
 
 /// 生のコンテキスト（コメント / 端末 / クリップ）を構造化レポートに変換する。
-public protocol ReportGenerating {
+public protocol ReportGenerating: Sendable {
     func generate(
         comment: String,
         device: DeviceInfo,

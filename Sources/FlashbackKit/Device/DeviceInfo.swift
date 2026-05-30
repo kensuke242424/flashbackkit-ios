@@ -3,7 +3,7 @@ import Foundation
 import UIKit
 #endif
 
-public struct DeviceInfo {
+public struct DeviceInfo: Sendable {
     public let model: String
     public let systemName: String
     public let systemVersion: String
