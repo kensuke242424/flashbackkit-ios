@@ -32,10 +32,23 @@ import FlashbackKit
 Flashback.start(
     configuration: .init(
         bufferSeconds: 30,
-        slackWebhookURL: URL(string: "https://hooks.slack.com/services/...")
+        slackWebhookURL: URL(string: "https://hooks.slack.com/services/..."),
+        savesClipToPhotos: true   // 既定 true: 直前クリップをカメラロールに保存
     )
 )
 ```
+
+### 必要な Info.plist キー
+
+`savesClipToPhotos`（既定 true）で写真ライブラリに保存するため、**ホストアプリの
+Info.plist に追記が必要**（無いと権限要求時にクラッシュする）:
+
+```xml
+<key>NSPhotoLibraryAddUsageDescription</key>
+<string>不具合レポートの直前録画クリップをカメラロールに保存します。</string>
+```
+
+写真保存が不要なら `savesClipToPhotos: false` にすればこのキーは不要。
 
 ## Example アプリ
 

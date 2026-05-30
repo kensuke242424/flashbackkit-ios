@@ -52,8 +52,14 @@ final class FlashbackController {
 
         Task {
             do {
-                // 録画はスタブ。書き出せなければ nil（クリップ無しレポート）。
+                // 書き出せなければ nil（クリップ無しレポート）。
                 let clipURL = try? await recorder.exportBufferedClip()
+
+                // 直前クリップを端末の写真ライブラリに保存（任意）。失敗してもループは継続。
+                if let clipURL, configuration.savesClipToPhotos {
+                    await Self.saveClipToPhotos(clipURL)
+                }
+
                 let report = try await configuration.reportGenerator.generate(
                     comment: comment,
                     device: .current(),
@@ -68,6 +74,18 @@ final class FlashbackController {
             try? await Task.sleep(nanoseconds: 2_500_000_000)
             presenter.showStatus("")
         }
+    }
+
+    /// 直前クリップを写真ライブラリへ保存する。失敗はログのみ（ループは止めない）。
+    private static func saveClipToPhotos(_ url: URL) async {
+        #if canImport(Photos)
+        do {
+            try await PhotoLibrarySaver.save(url)
+            FlashbackLog.report.info("クリップを写真ライブラリに保存しました")
+        } catch {
+            FlashbackLog.report.error("写真ライブラリ保存に失敗: \(error.localizedDescription, privacy: .public)")
+        }
+        #endif
     }
 
     /// Slack へ送る。Webhook 未設定なら内容をログ出力（PoC のループ確認用）。
