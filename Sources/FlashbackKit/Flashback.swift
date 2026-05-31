@@ -6,7 +6,8 @@ import Foundation
 public enum Flashback {
 
     /// FlashbackKit を起動する。
-    /// バッファ録画を開始し、シェイクでレポート UI を出す。
+    /// バッファ録画を開始し、有効なトリガ（既定: シェイク / 多指ホールド / フローティング
+    /// ボタン）でレポート UI を出す。`configuration.triggers` で手段を絞れる。
     ///
     /// アプリ起動直後（App init / didFinishLaunching）で一度だけ呼ぶ。
     @MainActor

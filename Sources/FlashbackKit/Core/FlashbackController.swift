@@ -1,14 +1,14 @@
 import Foundation
 
-/// 各責務（録画 / シェイク検知 / レポート / 送信）を束ねる調整役。
+/// 各責務（録画 / トリガ検知 / レポート / 送信）を束ねる調整役。
 @MainActor
 final class FlashbackController {
     static let shared = FlashbackController()
 
     private var configuration = FlashbackConfiguration()
     private let recorder = ScreenRecorder()
-    private let shakeDetector = ShakeDetector()
     private let presenter = FlashbackPresenter()
+    private var detectors: [TriggerDetecting] = []
 
     private init() {}
 
@@ -17,24 +17,33 @@ final class FlashbackController {
         guard configuration.isEnabled else { return }
 
         recorder.startBuffering(seconds: configuration.bufferSeconds)
+        presenter.install()
 
-        shakeDetector.onShake = { [weak self] in
-            self?.handleTrigger()
+        // 有効な各トリガに対応する detector を生成し、どれが発火しても handleTrigger() に集約。
+        var detectors: [TriggerDetecting] = []
+        if configuration.triggers.contains(.shake) {
+            detectors.append(ShakeTrigger())
         }
-        shakeDetector.start()
-
-        presenter.install(showsDebugButton: configuration.debugTriggerEnabled) { [weak self] in
-            self?.handleTrigger()
+        #if canImport(UIKit)
+        if let host = presenter.triggerHost, configuration.triggers.contains(.floatingButton) {
+            detectors.append(FloatingButtonTrigger(host: host, corner: configuration.floatingButtonCorner))
         }
+        #endif
+        for detector in detectors {
+            detector.onTrigger = { [weak self] in self?.handleTrigger() }
+            detector.start()
+        }
+        self.detectors = detectors
     }
 
     func stop() {
-        shakeDetector.stop()
+        detectors.forEach { $0.stop() }
+        detectors.removeAll()
         recorder.stopBuffering()
         presenter.uninstall()
     }
 
-    /// トリガー（シェイク or デバッグボタン）→ レポート入力 UI を提示。
+    /// トリガー（シェイク / 多指ホールド / ボタン）→ レポート入力 UI を提示。
     private func handleTrigger() {
         presenter.presentReport { [weak self] comment in
             self?.submit(comment: comment)

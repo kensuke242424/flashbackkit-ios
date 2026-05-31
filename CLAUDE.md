@@ -22,7 +22,8 @@ PoC / WIP。本番一般ユーザー向けではなく Debug / Staging / TestFli
 
 ## ディレクトリ構成
 - `Sources/FlashbackKit/Flashback.swift` — 公開API（`Flashback.start()`）
-- `Core/` — Controller / Configuration / Error / ShakeDetector
+- `Core/` — Controller / Configuration / Error / FlashbackTrigger(OptionSet)
+- `Core/Triggers/` — TriggerDetecting + 各トリガ実装（ShakeTrigger / MultiFingerHoldTrigger / FloatingButtonTrigger）
 - `Recording/ScreenRecorder` — ReplayKit リングバッファ
 - `Report/` — ReportView(SwiftUI) / FlashbackReport
 - `AI/ReportGenerator` — protocol + 実装

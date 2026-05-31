@@ -4,8 +4,8 @@ import FlashbackKit
 /// FlashbackKit の仮UIループを確認するためのホスト画面。
 ///
 /// 起動時に `Flashback.start()` を呼ぶと、SDK が overlay window に
-/// デバッグ用フローティングボタン（🐞）を出す。
-/// ボタン → ReportView → コメント入力 → 送信 でループが回る。
+/// 既定トリガ（シェイク / 3本指ロングプレス / フローティングボタン 🐞）を仕込む。
+/// いずれかのトリガ → ReportView → コメント入力 → 送信 でループが回る。
 ///
 /// 画面中央に「起動からの経過時間」をミリ秒単位で表示する。録画クリップを後で
 /// 再生したとき、この数字が動いていれば「トリガー直前の N 秒」が録れている証拠になる。
@@ -30,18 +30,17 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            Text("右下の 🐞 ボタンでレポート UI を開く")
+            Text("端末を振る（手持ち）／ 🐞 ボタンを長押し（据え置き）でレポート UI を開く")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
         .onAppear {
             // Webhook を設定するとここから Slack へ送れる。
             // 未設定（nil）の場合はレポート内容をコンソール出力する。
+            // triggers 未指定なので既定（シェイク + フローティングボタン）。
             Flashback.start(
-                configuration: .init(
-                    slackWebhookURL: nil,
-                    debugTriggerEnabled: true
-                )
+                configuration: .init(slackWebhookURL: nil)
             )
         }
     }

@@ -18,13 +18,9 @@ final class FlashbackPresenter {
     private var window: UIWindow?
     private weak var reportHost: UIViewController?
 
-    /// overlay window を前面シーンに設置する。
-    /// - Parameters:
-    ///   - showsDebugButton: デバッグ用フローティングボタンを常駐表示するか。
-    ///   - onTrigger: ボタンタップ（= トリガー）時に呼ばれる。
-    func install(showsDebugButton: Bool, onTrigger: @escaping () -> Void) {
-        model.onTrigger = onTrigger
-
+    /// overlay window を前面シーンに設置する。トリガ用の UI（ボタン / ジェスチャ）は
+    /// `triggerHost` を介して各 detector が載せる。
+    func install() {
         guard window == nil, let scene = Self.activeScene() else { return }
 
         let window = PassthroughWindow(windowScene: scene)
@@ -38,9 +34,12 @@ final class FlashbackPresenter {
         self.window = window
 
         installStatusOverlay(in: root)
-        if showsDebugButton {
-            installDebugButton(in: root)
-        }
+    }
+
+    /// トリガ detector が UI（フローティングボタン / 多指キャプチャ view）を載せるための
+    /// overlay root view controller。`install()` 後に有効。
+    var triggerHost: UIViewController? {
+        window?.rootViewController
     }
 
     /// overlay window を撤去する。
@@ -79,23 +78,6 @@ final class FlashbackPresenter {
     }
 
     // MARK: - 設置
-
-    private func installDebugButton(in root: UIViewController) {
-        let button = UIHostingController(
-            rootView: DebugTriggerButton { [model] in model.onTrigger() }
-        )
-        button.view.backgroundColor = .clear
-        button.sizingOptions = .intrinsicContentSize
-        button.view.translatesAutoresizingMaskIntoConstraints = false
-
-        root.addChild(button)
-        root.view.addSubview(button.view)
-        NSLayoutConstraint.activate([
-            button.view.trailingAnchor.constraint(equalTo: root.view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
-            button.view.bottomAnchor.constraint(equalTo: root.view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
-        ])
-        button.didMove(toParent: root)
-    }
 
     private func installStatusOverlay(in root: UIViewController) {
         let overlay = UIHostingController(rootView: StatusOverlay(model: model))
@@ -140,7 +122,6 @@ private final class PassthroughWindow: UIWindow {
 @MainActor
 private final class OverlayModel: ObservableObject {
     @Published var status: String?
-    var onTrigger: () -> Void = {}
 }
 
 /// 送信ステータス（トースト）を画面下中央に出す非インタラクティブ overlay。
@@ -161,23 +142,6 @@ private struct StatusOverlay: View {
     }
 }
 
-/// デバッグ用フローティングボタン（本物のシェイク検知の代用）。
-private struct DebugTriggerButton: View {
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "ladybug.fill")
-                .font(.title2)
-                .foregroundStyle(.white)
-                .frame(width: 56, height: 56)
-                .background(Color.accentColor, in: Circle())
-                .shadow(radius: 4, y: 2)
-        }
-        .accessibilityLabel("Flashback レポート")
-    }
-}
-
 /// 送信中／結果を伝える軽量トースト。
 private struct StatusToast: View {
     let text: String
@@ -194,7 +158,7 @@ private struct StatusToast: View {
 #else
 /// UIKit / SwiftUI が無い環境（macOS ホストビルド等）向けの no-op スタブ。
 final class FlashbackPresenter {
-    func install(showsDebugButton: Bool, onTrigger: @escaping () -> Void) {}
+    func install() {}
     func uninstall() {}
     func presentReport(onSend: @escaping (String) -> Void) {}
     func dismissReport() {}

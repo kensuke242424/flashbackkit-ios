@@ -12,9 +12,14 @@ public struct FlashbackConfiguration: Sendable {
     /// 有効フラグ。Release ビルドでは原則 false 運用を想定。
     public var isEnabled: Bool
 
-    /// 本物のシェイク検知の代わりに、画面上のデバッグ用フローティングボタンで
-    /// レポート UI をトリガーする。PoC / Simulator 動作確認向け。
-    public var debugTriggerEnabled: Bool
+    /// レポート UI を起動するトリガ手段の集合（`OptionSet`、複数同時有効）。
+    /// 既定は手持ち=シェイク / 据え置き=フローティングボタン の両対応。
+    /// 環境に応じて `.init(triggers: [.shake])` のように絞れる。
+    public var triggers: FlashbackTrigger
+
+    /// `.floatingButton` の初期表示位置（四隅）。既定は右下。
+    /// 表示後は QA がドラッグで動かせる。
+    public var floatingButtonCorner: FloatingButtonCorner
 
     /// 生コンテキストを構造化レポートへ変換する実装。
     /// 既定は `StubReportGenerator`。Claude / OpenAI / Gemini 実装に差し替える。
@@ -30,15 +35,25 @@ public struct FlashbackConfiguration: Sendable {
         bufferSeconds: TimeInterval = 30,
         slackWebhookURL: URL? = nil,
         isEnabled: Bool = true,
-        debugTriggerEnabled: Bool = true,
+        triggers: FlashbackTrigger = .default,
+        floatingButtonCorner: FloatingButtonCorner = .bottomTrailing,
         reportGenerator: ReportGenerating = StubReportGenerator(),
         savesClipToPhotos: Bool = true
     ) {
         self.bufferSeconds = bufferSeconds
         self.slackWebhookURL = slackWebhookURL
         self.isEnabled = isEnabled
-        self.debugTriggerEnabled = debugTriggerEnabled
+        self.triggers = triggers
+        self.floatingButtonCorner = floatingButtonCorner
         self.reportGenerator = reportGenerator
         self.savesClipToPhotos = savesClipToPhotos
     }
+}
+
+/// フローティングボタンの初期表示位置（四隅）。
+public enum FloatingButtonCorner: Sendable {
+    case topLeading
+    case topTrailing
+    case bottomLeading
+    case bottomTrailing
 }
