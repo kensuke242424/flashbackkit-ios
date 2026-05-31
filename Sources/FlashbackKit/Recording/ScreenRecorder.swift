@@ -155,16 +155,23 @@ final class SegmentRingWriter: @unchecked Sendable {
         self.videoInput = nil
         self.currentSegmentStart = .invalid
 
-        writer.finishWriting { [weak self] in
-            guard let self else { completion?(); return }
+        // finishWriting / queue.async のクロージャは @Sendable 扱い。writer(AVAssetWriter) と
+        // completion は非 Sendable だが、この確定フローは単一論理スレッド（finishWriting 完了 →
+        // 自前 serial queue）で writer をここでしか触れず completion も一度だけ呼ぶため安全。
+        // 値を box 化すると ARC 経路が変わりブロックの過剰解放でクラッシュするため、捕捉する
+        // local に nonisolated(unsafe) を付けて「並行境界越しでも安全」と明示するに留める。
+        nonisolated(unsafe) let finishedWriter = writer
+        nonisolated(unsafe) let finishCompletion = completion
+        finishedWriter.finishWriting { [weak self] in
+            guard let self else { finishCompletion?(); return }
             self.queue.async {
-                if writer.status == .completed {
+                if finishedWriter.status == .completed {
                     self.segmentURLs.append(url)
                     self.trimRing()
                 } else {
                     try? FileManager.default.removeItem(at: url)
                 }
-                completion?()
+                finishCompletion?()
             }
         }
     }
