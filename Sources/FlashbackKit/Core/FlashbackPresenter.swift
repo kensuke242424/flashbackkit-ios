@@ -54,14 +54,20 @@ final class FlashbackPresenter {
     /// レポート入力 UI をモーダルで表示する。
     /// - Parameters:
     ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければコメントのみ。
-    ///   - onSend: 送信ボタン押下時に（コメント, 選択範囲秒）を受け取る。範囲はクリップ無しなら nil。
-    func presentReport(clipURL: URL?, onSend: @escaping (String, ClosedRange<Double>?) -> Void) {
+    ///   - onSave: 保存アクション。（コメント, 選択範囲秒）を受け取り、切り出し→カメラロール保存→commit。
+    ///   - onShare: 共有アクション。切り出し→commit し、共有シート用の最終クリップ URL を返す。
+    func presentReport(
+        clipURL: URL?,
+        onSave: @escaping (String, ClosedRange<Double>?) async -> Void,
+        onShare: @escaping (String, ClosedRange<Double>?) async -> URL?
+    ) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
 
         let report = ReportView(
             clipURL: clipURL,
             device: .current(),                           // @MainActor 採取（本メソッドは @MainActor）
-            onSend: { onSend($0, $1) },                   // 後段（dismiss / status）は呼び出し側が制御
+            onSave: onSave,
+            onShare: onShare,
             onCancel: { [weak self] in self?.dismissReport() }
         )
         let host = UIHostingController(rootView: report)
@@ -165,7 +171,11 @@ private struct StatusToast: View {
 final class FlashbackPresenter {
     func install() {}
     func uninstall() {}
-    func presentReport(clipURL: URL?, onSend: @escaping (String, ClosedRange<Double>?) -> Void) {}
+    func presentReport(
+        clipURL: URL?,
+        onSave: @escaping (String, ClosedRange<Double>?) async -> Void,
+        onShare: @escaping (String, ClosedRange<Double>?) async -> URL?
+    ) {}
     func dismissReport() {}
     func showStatus(_ message: String) {}
 }
