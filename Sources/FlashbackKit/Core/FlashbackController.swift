@@ -107,7 +107,7 @@ final class FlashbackController {
             Webhook 未設定のためログ出力:
             title: \(report.title, privacy: .public)
             comment: \(report.comment, privacy: .public)
-            device: \(report.device.model, privacy: .public) / \(report.device.systemName, privacy: .public) \(report.device.systemVersion, privacy: .public)
+            device: \(report.device.displayModel, privacy: .public) / \(report.device.systemName, privacy: .public) \(report.device.systemVersion, privacy: .public)
             clip: \(report.clipURL?.absoluteString ?? "なし", privacy: .public)
             """)
             return
