@@ -1,0 +1,24 @@
+#if DEBUG
+import Foundation
+
+public extension Flashback {
+
+    /// DEBUG 専用: 合成サンプル動画でレポート（プレビュー＋トリミング）UI を即時表示する。
+    ///
+    /// ReplayKit 実録画が動かない Simulator でトリミング UX を確認するための入口。
+    /// 事前に `Flashback.start()` を呼んで overlay window が設置されている必要がある。
+    /// Release ビルドには含まれない。
+    @MainActor
+    static func debugPresentSampleReport(seconds: Int = 12) {
+        Task {
+            #if canImport(AVFoundation) && canImport(UIKit)
+            guard let url = try? await SampleClipMaker.make(seconds: seconds) else {
+                FlashbackLog.report.error("サンプル動画の生成に失敗")
+                return
+            }
+            FlashbackController.shared.debugPresentReport(clipURL: url)
+            #endif
+        }
+    }
+}
+#endif

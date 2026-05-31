@@ -43,6 +43,15 @@ final class FlashbackController {
         presenter.uninstall()
     }
 
+    #if DEBUG
+    /// DEBUG 専用: 任意のクリップでレポート UI を直接提示する（トリム UX 確認用）。
+    func debugPresentReport(clipURL: URL) {
+        presenter.presentReport(clipURL: clipURL) { [weak self] comment, range in
+            self?.submit(comment: comment, clipURL: clipURL, range: range)
+        }
+    }
+    #endif
+
     /// トリガー（シェイク / 多指ホールド / ボタン）→ 直前クリップを書き出してから
     /// プレビュー＋トリミング付きのレポート入力 UI を提示。
     private func handleTrigger() {
