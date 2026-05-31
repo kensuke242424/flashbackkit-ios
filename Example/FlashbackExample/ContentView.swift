@@ -4,8 +4,8 @@ import FlashbackKit
 /// FlashbackKit の仮UIループを確認するためのホスト画面。
 ///
 /// 起動時に `Flashback.start()` を呼ぶと、SDK が overlay window に
-/// 既定トリガ（シェイク / 3本指ロングプレス / フローティングボタン 🐞）を仕込む。
-/// いずれかのトリガ → ReportView → コメント入力 → 送信 でループが回る。
+/// 既定トリガ（シェイク / フローティングボタン 🐞）を仕込む。
+/// いずれかのトリガ → ReportView → タイトル入力 → 共有 でループが回る。
 ///
 /// 画面中央に「起動からの経過時間」をミリ秒単位で表示する。録画クリップを後で
 /// 再生したとき、この数字が動いていれば「トリガー直前の N 秒」が録れている証拠になる。
@@ -48,15 +48,12 @@ struct ContentView: View {
             #endif
         }
         .onAppear {
-            // Webhook を設定するとここから Slack へ送れる。
-            // 未設定（nil）の場合はレポート内容をコンソール出力する。
             // triggers 未指定なので既定（シェイク + フローティングボタン）。
             Flashback.start(
-                configuration: .init(slackWebhookURL: nil),
-                // ハンドオフ: 録画→トリム→保存まで終えた成果物がここに届く。
-                // ホストは自由にルーティングできる（ここでは demo としてログ出力）。
+                // ハンドオフ: 録画→トリム→共有まで終えた成果物がここに届く。
+                // AI 要約・Slack 送信・自社連携はホスト側で自由に（ここでは demo としてログ出力）。
                 onReport: { report in
-                    print("[Flashback] onReport: \(report.device.displayModel) / \(report.comment)")
+                    print("[Flashback] onReport: \(report.device.displayModel) / \(report.title)")
                     if let clip = report.clipURL {
                         print("[Flashback] clip: \(clip.path)")
                     }

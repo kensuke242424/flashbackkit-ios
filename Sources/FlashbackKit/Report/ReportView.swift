@@ -7,15 +7,15 @@ import AVFoundation
 ///
 /// 出口は右上の「共有（↑）」ひとつ。OS 標準シート経由で 写真に保存 / ファイルに保存 /
 /// AirDrop / 他アプリ送信 をまとめて選べる。クリップが無い場合（Simulator / 録画不可）は
-/// コメントのみで「完了」になる。共有 / 完了 を確定した時点でホスト（onReport）へ手渡される。
+/// タイトルのみで「完了」になる。共有 / 完了 を確定した時点でホスト（onReport）へ手渡される。
 /// 本ファイルは Presenter（UIKit + SwiftUI 環境）からのみ使われるため UIKit/AVFoundation を前提にする。
 struct ReportView: View {
     let clipURL: URL?
     /// レポートに同梱される端末情報（送信前に QA が確認できるよう表示する）。
     /// `DeviceInfo.current()` は `@MainActor` なので、呼び出し側（Presenter）で採取して渡す。
     let device: DeviceInfo
-    /// 保存: 切り出し→カメラロール保存→commit。完了後に UI は閉じる。
-    let onSave: (String, ClosedRange<Double>?) async -> Void
+    /// 完了: クリップ無し時（録画不可 / Simulator）の確定。commit して UI を閉じる。
+    let onComplete: (String) async -> Void
     /// 共有: 切り出し→commit し、共有シート用の最終クリップ URL を返す。
     let onShare: (String, ClosedRange<Double>?) async -> URL?
     let onCancel: () -> Void
@@ -61,7 +61,7 @@ struct ReportView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if clipURL == nil {
-                        Button("完了") { save() }
+                        Button("完了") { complete() }
                             .disabled(title.isEmpty || isWorking)
                     } else {
                         Button(action: share) {
@@ -89,10 +89,10 @@ struct ReportView: View {
         clipURL == nil ? nil : selection
     }
 
-    private func save() {
+    private func complete() {
         isWorking = true
         Task {
-            await onSave(title, selectionForClip)
+            await onComplete(title)
             isWorking = false
         }
     }

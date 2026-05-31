@@ -37,7 +37,7 @@ final class FlashbackPresenter {
         installStatusOverlay(in: root)
     }
 
-    /// トリガ detector が UI（フローティングボタン / 多指キャプチャ view）を載せるための
+    /// トリガ detector が UI（フローティングボタン）を載せるための
     /// overlay root view controller。`install()` 後に有効。
     var triggerHost: UIViewController? {
         window?.rootViewController
@@ -53,12 +53,12 @@ final class FlashbackPresenter {
 
     /// レポート入力 UI をモーダルで表示する。
     /// - Parameters:
-    ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければコメントのみ。
-    ///   - onSave: 保存アクション。（コメント, 選択範囲秒）を受け取り、切り出し→カメラロール保存→commit。
+    ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければタイトルのみで「完了」。
+    ///   - onComplete: 完了アクション（クリップ無し時）。タイトルを受け取り commit する。
     ///   - onShare: 共有アクション。切り出し→commit し、共有シート用の最終クリップ URL を返す。
     func presentReport(
         clipURL: URL?,
-        onSave: @escaping (String, ClosedRange<Double>?) async -> Void,
+        onComplete: @escaping (String) async -> Void,
         onShare: @escaping (String, ClosedRange<Double>?) async -> URL?
     ) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
@@ -66,7 +66,7 @@ final class FlashbackPresenter {
         let report = ReportView(
             clipURL: clipURL,
             device: .current(),                           // @MainActor 採取（本メソッドは @MainActor）
-            onSave: onSave,
+            onComplete: onComplete,
             onShare: onShare,
             onCancel: { [weak self] in self?.dismissReport() }
         )
@@ -173,7 +173,7 @@ final class FlashbackPresenter {
     func uninstall() {}
     func presentReport(
         clipURL: URL?,
-        onSave: @escaping (String, ClosedRange<Double>?) async -> Void,
+        onComplete: @escaping (String) async -> Void,
         onShare: @escaping (String, ClosedRange<Double>?) async -> URL?
     ) {}
     func dismissReport() {}
