@@ -9,9 +9,9 @@ final class FlashbackController {
     private let recorder = ScreenRecorder()
     private let presenter = FlashbackPresenter()
     private var detectors: [TriggerDetecting] = []
-    /// 成果物 `FlashbackReport` をホストへ手渡すコールバック（拡張点）。
+    /// 成果物 `FlashbackReport` をホストへ手渡すコールバック（唯一の拡張点）。
     private var onReport: (@MainActor (FlashbackReport) -> Void)?
-    /// 1 回の提示につき onReport / Slack を一度だけ発火させるためのフラグ
+    /// 1 回の提示につき onReport を一度だけ発火させるためのフラグ
     /// （保存と共有の両方を行っても二重に commit しない）。
     private var hasCommitted = false
 
@@ -59,7 +59,7 @@ final class FlashbackController {
     }
     #endif
 
-    /// トリガー（シェイク / 多指ホールド / ボタン）→ 直前クリップを書き出してから
+    /// トリガー（シェイク / フローティングボタン）→ 直前クリップを書き出してから
     /// プレビュー＋トリミング付きのレポート入力 UI を提示。
     private func handleTrigger() {
         let recorder = self.recorder
@@ -74,56 +74,42 @@ final class FlashbackController {
         }
     }
 
-    /// レポート UI を提示する。保存 / 共有の 2 アクションを配線する。
+    /// レポート UI を提示する。完了（クリップ無し時）/ 共有 の 2 アクションを配線する。
     private func present(rawClip: URL?) {
         hasCommitted = false
         presenter.presentReport(
             clipURL: rawClip,
-            onSave: { [weak self] comment, range in
-                await self?.handleSave(rawClip: rawClip, comment: comment, range: range)
+            onComplete: { [weak self] title in
+                await self?.handleComplete(title: title)
             },
-            onShare: { [weak self] comment, range in
-                await self?.handleShare(rawClip: rawClip, comment: comment, range: range)
+            onShare: { [weak self] title, range in
+                await self?.handleShare(rawClip: rawClip, title: title, range: range)
             }
         )
     }
 
-    /// 保存: 選択範囲を切り出し（メタデータ焼き込み）→ カメラロール保存 → commit → 閉じる。
-    private func handleSave(rawClip: URL?, comment: String, range: ClosedRange<Double>?) async {
-        let device = DeviceInfo.current()
-        let finalClip = await Self.finalizedClip(rawClip, range: range, comment: comment, device: device)
-        if let finalClip {
-            await Self.saveClipToPhotos(finalClip)
-        }
-        await commit(comment: comment, clip: finalClip, device: device)
+    /// 完了: クリップが無い（録画不可 / Simulator）場合の確定。成果物を commit して閉じる。
+    private func handleComplete(title: String) async {
+        commit(title: title, clip: nil, device: DeviceInfo.current())
         presenter.dismissReport()
-        flashStatus(finalClip != nil ? "保存しました ✅" : "送信しました ✅")
+        flashStatus("完了しました ✅")
     }
 
     /// 共有: 選択範囲を切り出し（メタデータ焼き込み）→ commit → 共有シート用の URL を返す。
-    /// UI 側が `UIActivityViewController` を提示する（端末保存・AirDrop 等はそちらで選択）。
-    private func handleShare(rawClip: URL?, comment: String, range: ClosedRange<Double>?) async -> URL? {
+    /// 端末保存（写真）・AirDrop 等は OS 標準シート（`UIActivityViewController`）側で選ぶ。
+    private func handleShare(rawClip: URL?, title: String, range: ClosedRange<Double>?) async -> URL? {
         let device = DeviceInfo.current()
-        let finalClip = await Self.finalizedClip(rawClip, range: range, comment: comment, device: device)
-        await commit(comment: comment, clip: finalClip, device: device)
+        let finalClip = await Self.finalizedClip(rawClip, range: range, title: title, device: device)
+        commit(title: title, clip: finalClip, device: device)
         return finalClip
     }
 
-    /// ホストへ成果物を手渡し（onReport）、Slack へ送る。提示ごとに一度だけ実行する。
-    private func commit(comment: String, clip: URL?, device: DeviceInfo) async {
+    /// 成果物 `FlashbackReport` をホストへ手渡す（onReport）。提示ごとに一度だけ実行する。
+    /// AI 要約・Slack 送信・自社連携はホスト側の責務（onReport が唯一の拡張点）。
+    private func commit(title: String, clip: URL?, device: DeviceInfo) {
         guard !hasCommitted else { return }
         hasCommitted = true
-        do {
-            let report = try await configuration.reportGenerator.generate(
-                comment: comment,
-                device: device,
-                clipURL: clip
-            )
-            onReport?(report)
-            try await Self.deliver(report: report, webhookURL: configuration.slackWebhookURL)
-        } catch {
-            FlashbackLog.report.error("レポート処理に失敗: \(error.localizedDescription, privacy: .public)")
-        }
+        onReport?(FlashbackReport(title: title, device: device, clipURL: clip))
     }
 
     /// 一時的なステータス文言を出して数秒後に消す。
@@ -135,23 +121,23 @@ final class FlashbackController {
         }
     }
 
-    /// 選択範囲（秒）で切り出し、タイトル=コメント/説明=端末情報のメタデータを焼き込み、
-    /// ファイル名をコメント由来にした最終クリップを返す。範囲・クリップが無い、または
-    /// 処理失敗時は元のクリップをそのまま返す（送信は止めない）。
+    /// 選択範囲（秒）で切り出し、タイトル/説明=端末情報のメタデータを焼き込み、
+    /// ファイル名をタイトル由来にした最終クリップを返す。範囲・クリップが無い、または
+    /// 処理失敗時は元のクリップをそのまま返す（処理は止めない）。
     private static func finalizedClip(
         _ clipURL: URL?,
         range: ClosedRange<Double>?,
-        comment: String,
+        title: String,
         device: DeviceInfo
     ) async -> URL? {
         guard let clipURL, let range else { return clipURL }
         #if canImport(AVFoundation)
         do {
             let metadata = ClipTrimmer.metadata(
-                title: comment,
+                title: title,
                 description: "\(device.displayModel) / \(device.systemName) \(device.systemVersion)"
             )
-            let outputName = comment.isEmpty ? nil : ClipTrimmer.sanitizedFileName(comment)
+            let outputName = title.isEmpty ? nil : ClipTrimmer.sanitizedFileName(title)
             return try await ClipTrimmer.trim(
                 clipURL,
                 fromSeconds: range.lowerBound,
@@ -166,35 +152,5 @@ final class FlashbackController {
         #else
         return clipURL
         #endif
-    }
-
-    /// 直前クリップを写真ライブラリへ保存する。失敗はログのみ（ループは止めない）。
-    private static func saveClipToPhotos(_ url: URL) async {
-        #if canImport(Photos)
-        do {
-            try await PhotoLibrarySaver.save(url)
-            FlashbackLog.report.info("クリップを写真ライブラリに保存しました")
-        } catch {
-            FlashbackLog.report.error("写真ライブラリ保存に失敗: \(error.localizedDescription, privacy: .public)")
-        }
-        #endif
-    }
-
-    /// Slack へ送る。Webhook 未設定なら内容をログ出力（PoC のループ確認用）。
-    /// Console.app では `subsystem:FlashbackKit category:report` で追える。
-    private static func deliver(report: FlashbackReport, webhookURL: URL?) async throws {
-        guard let webhookURL else {
-            // Webhook 未設定時の明示的なダンプ経路。レポート本文は Slack へ送る想定の
-            // 内容なので .public で出す（録画の生データはここには含めない）。
-            FlashbackLog.report.info("""
-            Webhook 未設定のためログ出力:
-            title: \(report.title, privacy: .public)
-            comment: \(report.comment, privacy: .public)
-            device: \(report.device.displayModel, privacy: .public) / \(report.device.systemName, privacy: .public) \(report.device.systemVersion, privacy: .public)
-            clip: \(report.clipURL?.absoluteString ?? "なし", privacy: .public)
-            """)
-            return
-        }
-        try await SlackNotifier(webhookURL: webhookURL).post(report: report)
     }
 }
