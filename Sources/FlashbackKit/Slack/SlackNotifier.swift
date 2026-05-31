@@ -17,7 +17,7 @@ struct SlackNotifier {
         *\(report.title)*
         \(report.comment)
 
-        Device: \(report.device.model) / \(report.device.systemName) \(report.device.systemVersion)
+        Device: \(report.device.model) (\(report.device.modelIdentifier)) / \(report.device.systemName) \(report.device.systemVersion)
         App: \(report.device.appVersion) (\(report.device.buildNumber))
         """
         let payload = ["text": text]
