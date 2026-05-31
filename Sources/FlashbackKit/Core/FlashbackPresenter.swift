@@ -1,3 +1,4 @@
+import Foundation
 #if canImport(UIKit) && canImport(SwiftUI)
 import UIKit
 import SwiftUI
@@ -51,12 +52,16 @@ final class FlashbackPresenter {
     }
 
     /// レポート入力 UI をモーダルで表示する。
-    /// - Parameter onSend: 送信ボタン押下時に入力コメントを受け取る。
-    func presentReport(onSend: @escaping (String) -> Void) {
+    /// - Parameters:
+    ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければコメントのみ。
+    ///   - onSend: 送信ボタン押下時に（コメント, 選択範囲秒）を受け取る。範囲はクリップ無しなら nil。
+    func presentReport(clipURL: URL?, onSend: @escaping (String, ClosedRange<Double>?) -> Void) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
 
         let report = ReportView(
-            onSend: { onSend($0) },                       // 後段（dismiss / status）は呼び出し側が制御
+            clipURL: clipURL,
+            device: .current(),                           // @MainActor 採取（本メソッドは @MainActor）
+            onSend: { onSend($0, $1) },                   // 後段（dismiss / status）は呼び出し側が制御
             onCancel: { [weak self] in self?.dismissReport() }
         )
         let host = UIHostingController(rootView: report)
@@ -160,7 +165,7 @@ private struct StatusToast: View {
 final class FlashbackPresenter {
     func install() {}
     func uninstall() {}
-    func presentReport(onSend: @escaping (String) -> Void) {}
+    func presentReport(clipURL: URL?, onSend: @escaping (String, ClosedRange<Double>?) -> Void) {}
     func dismissReport() {}
     func showStatus(_ message: String) {}
 }

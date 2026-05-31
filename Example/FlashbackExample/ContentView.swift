@@ -34,6 +34,18 @@ struct ContentView: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+
+            #if DEBUG
+            // Simulator では ReplayKit 実録画が動かず本物のクリップが出ないため、
+            // 合成サンプル動画でトリミング UX を確認するためのデバッグ入口。
+            Button {
+                Flashback.debugPresentSampleReport()
+            } label: {
+                Label("サンプル動画でトリマーを開く", systemImage: "scissors")
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 8)
+            #endif
         }
         .onAppear {
             // Webhook を設定するとここから Slack へ送れる。
@@ -42,6 +54,16 @@ struct ContentView: View {
             Flashback.start(
                 configuration: .init(slackWebhookURL: nil)
             )
+
+            #if DEBUG
+            // 環境変数 FLASHBACK_TRIM_DEMO が立っていれば起動直後にトリマーを自動提示する
+            // （Simulator/自動検証でトリミング UX を確認するため）。
+            if ProcessInfo.processInfo.environment["FLASHBACK_TRIM_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentSampleReport()
+                }
+            }
+            #endif
         }
     }
 

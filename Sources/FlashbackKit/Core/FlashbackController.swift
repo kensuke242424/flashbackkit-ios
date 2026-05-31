@@ -43,36 +43,54 @@ final class FlashbackController {
         presenter.uninstall()
     }
 
-    /// トリガー（シェイク / 多指ホールド / ボタン）→ レポート入力 UI を提示。
+    #if DEBUG
+    /// DEBUG 専用: 任意のクリップでレポート UI を直接提示する（トリム UX 確認用）。
+    func debugPresentReport(clipURL: URL) {
+        presenter.presentReport(clipURL: clipURL) { [weak self] comment, range in
+            self?.submit(comment: comment, clipURL: clipURL, range: range)
+        }
+    }
+    #endif
+
+    /// トリガー（シェイク / 多指ホールド / ボタン）→ 直前クリップを書き出してから
+    /// プレビュー＋トリミング付きのレポート入力 UI を提示。
     private func handleTrigger() {
-        presenter.presentReport { [weak self] comment in
-            self?.submit(comment: comment)
+        let recorder = self.recorder
+        let presenter = self.presenter
+        presenter.showStatus("録画を準備中…")
+
+        Task {
+            // 書き出せなければ nil（クリップ無し＝コメントのみのフォール）。
+            let clipURL = try? await recorder.exportBufferedClip()
+            presenter.showStatus("")
+            presenter.presentReport(clipURL: clipURL) { [weak self] comment, range in
+                self?.submit(comment: comment, clipURL: clipURL, range: range)
+            }
         }
     }
 
-    /// コメント送信 → クリップ書き出し → レポート生成 → Slack 送信のループ本体。
-    private func submit(comment: String) {
+    /// 送信 → 選択範囲で切り出し → 写真保存 → レポート生成 → Slack 送信のループ本体。
+    private func submit(comment: String, clipURL: URL?, range: ClosedRange<Double>?) {
         presenter.dismissReport()
         presenter.showStatus("レポート送信中…")
 
         let configuration = self.configuration
-        let recorder = self.recorder
         let presenter = self.presenter
 
         Task {
             do {
-                // 書き出せなければ nil（クリップ無しレポート）。
-                let clipURL = try? await recorder.exportBufferedClip()
+                // 選択範囲があれば切り出す。失敗時はフルクリップにフォールバック。
+                let finalClip = await Self.trimmedClip(clipURL, range: range)
 
                 // 直前クリップを端末の写真ライブラリに保存（任意）。失敗してもループは継続。
-                if let clipURL, configuration.savesClipToPhotos {
-                    await Self.saveClipToPhotos(clipURL)
+                if let finalClip, configuration.savesClipToPhotos {
+                    await Self.saveClipToPhotos(finalClip)
                 }
 
                 let report = try await configuration.reportGenerator.generate(
                     comment: comment,
                     device: .current(),
-                    clipURL: clipURL
+                    clipURL: finalClip
                 )
                 try await Self.deliver(report: report, webhookURL: configuration.slackWebhookURL)
                 presenter.showStatus("送信しました ✅")
@@ -83,6 +101,22 @@ final class FlashbackController {
             try? await Task.sleep(nanoseconds: 2_500_000_000)
             presenter.showStatus("")
         }
+    }
+
+    /// 選択範囲（秒）でクリップを切り出す。範囲・クリップが無い、または切り出し失敗時は
+    /// 元のクリップをそのまま返す（送信は止めない）。
+    private static func trimmedClip(_ clipURL: URL?, range: ClosedRange<Double>?) async -> URL? {
+        guard let clipURL, let range else { return clipURL }
+        #if canImport(AVFoundation)
+        do {
+            return try await ClipTrimmer.trim(clipURL, fromSeconds: range.lowerBound, toSeconds: range.upperBound)
+        } catch {
+            FlashbackLog.report.error("クリップ切り出しに失敗（フル尺で継続）: \(error.localizedDescription, privacy: .public)")
+            return clipURL
+        }
+        #else
+        return clipURL
+        #endif
     }
 
     /// 直前クリップを写真ライブラリへ保存する。失敗はログのみ（ループは止めない）。
