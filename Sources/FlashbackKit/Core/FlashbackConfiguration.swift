@@ -25,20 +25,13 @@ public struct FlashbackConfiguration: Sendable {
     /// 既定は `StubReportGenerator`。Claude / OpenAI / Gemini 実装に差し替える。
     public var reportGenerator: ReportGenerating
 
-    /// 書き出した直前クリップを端末の写真ライブラリ（カメラロール）に保存するか。
-    /// 既定 true。有効時はホストアプリの Info.plist に
-    /// `NSPhotoLibraryAddUsageDescription` が必須（無いと権限要求でクラッシュする）。
-    /// 注意: 画面録画はセンシティブ情報を含みうる。写真ライブラリ/iCloud に乗る点に留意。
-    public var savesClipToPhotos: Bool
-
     public init(
         bufferSeconds: TimeInterval = 30,
         slackWebhookURL: URL? = nil,
         isEnabled: Bool = true,
         triggers: FlashbackTrigger = .default,
         floatingButtonCorner: FloatingButtonCorner = .bottomTrailing,
-        reportGenerator: ReportGenerating = StubReportGenerator(),
-        savesClipToPhotos: Bool = true
+        reportGenerator: ReportGenerating = StubReportGenerator()
     ) {
         self.bufferSeconds = bufferSeconds
         self.slackWebhookURL = slackWebhookURL
@@ -46,7 +39,6 @@ public struct FlashbackConfiguration: Sendable {
         self.triggers = triggers
         self.floatingButtonCorner = floatingButtonCorner
         self.reportGenerator = reportGenerator
-        self.savesClipToPhotos = savesClipToPhotos
     }
 }
 

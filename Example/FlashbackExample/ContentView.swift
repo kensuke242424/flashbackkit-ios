@@ -52,7 +52,15 @@ struct ContentView: View {
             // 未設定（nil）の場合はレポート内容をコンソール出力する。
             // triggers 未指定なので既定（シェイク + フローティングボタン）。
             Flashback.start(
-                configuration: .init(slackWebhookURL: nil)
+                configuration: .init(slackWebhookURL: nil),
+                // ハンドオフ: 録画→トリム→保存まで終えた成果物がここに届く。
+                // ホストは自由にルーティングできる（ここでは demo としてログ出力）。
+                onReport: { report in
+                    print("[Flashback] onReport: \(report.device.displayModel) / \(report.comment)")
+                    if let clip = report.clipURL {
+                        print("[Flashback] clip: \(clip.path)")
+                    }
+                }
             )
 
             #if DEBUG

@@ -37,6 +37,31 @@ final class ClipTrimmerTests: XCTestCase {
         XCTAssertEqual(result, source, "フル選択では元 URL をそのまま返すべき")
     }
 
+    func testEmbedsTitleMetadataAndFileName() async throws {
+        let source = try await makeTestClip(seconds: 4, fps: 30)
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let metadata = ClipTrimmer.metadata(title: "在庫バグ", description: "iPhone 15 Pro / iOS 26.5")
+        let range = CMTimeRange(start: .zero, duration: CMTime(seconds: 4, preferredTimescale: 600))
+        let out = try await ClipTrimmer.trim(source, to: range, metadata: metadata, outputName: "在庫バグ")
+        defer { if out != source { try? FileManager.default.removeItem(at: out) } }
+
+        // フル範囲でも metadata 指定時は焼き込みのため書き出される（元 URL とは別物）。
+        XCTAssertNotEqual(out, source)
+        // 出力ファイル名がコメント由来になっている（共有時に Mac で見えるファイル名）。
+        XCTAssertEqual(out.deletingPathExtension().lastPathComponent, "在庫バグ")
+        // 共通メタデータの title が読み戻せる。
+        let items = try await AVURLAsset(url: out).load(.commonMetadata)
+        let titleItem = items.first { $0.commonKey == .commonKeyTitle }
+        let title = try await titleItem?.load(.stringValue)
+        XCTAssertEqual(title, "在庫バグ")
+    }
+
+    func testSanitizesFileName() {
+        XCTAssertEqual(ClipTrimmer.sanitizedFileName("a/b:c\nd"), "a b c d")
+        XCTAssertEqual(ClipTrimmer.sanitizedFileName("   "), "Flashback")
+    }
+
     // MARK: - 合成素材
 
     /// 単一トラックの mp4 を AVAssetWriter で合成する。
