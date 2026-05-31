@@ -23,19 +23,26 @@ struct VideoTrimmerView: View {
     @State private var playhead: Double = 0
     @State private var isPlaying = false
     @State private var timeObserver: Any?
+    /// 動画の表示アスペクト比（幅/高さ）。尺確定時に実トラックから求め、プレビュー枠を
+    /// これに合わせることで黒帯（レターボックス）を出さない。確定までは縦動画想定の暫定値。
+    @State private var videoAspect: CGFloat = 9.0 / 16.0
 
     var body: some View {
         VStack(spacing: 10) {
-            PlayerLayerView(player: player)
-                .aspectRatio(9.0 / 16.0, contentMode: .fit)
-                .frame(maxHeight: 240)
-                .background(.black, in: RoundedRectangle(cornerRadius: 10))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay {
-                    if duration == 0 {
-                        ProgressView().tint(.white)
+            HStack {
+                Spacer(minLength: 0)
+                PlayerLayerView(player: player)
+                    .aspectRatio(videoAspect, contentMode: .fit)
+                    .frame(maxHeight: 280)
+                    .background(.black, in: RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay {
+                        if duration == 0 {
+                            ProgressView().tint(.white)
+                        }
                     }
-                }
+                Spacer(minLength: 0)
+            }
 
             HStack(spacing: 12) {
                 Button {
@@ -89,6 +96,14 @@ struct VideoTrimmerView: View {
         // 初期値（未設定）なら全体を選択範囲にする。
         if selection.lowerBound >= selection.upperBound {
             selection = 0...seconds
+        }
+        // 実トラックから表示アスペクト比を求めてプレビュー枠を合わせる（黒帯を出さない）。
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let natural = try? await track.load(.naturalSize),
+           let transform = try? await track.load(.preferredTransform) {
+            let displayed = natural.applying(transform)
+            let w = abs(displayed.width), h = abs(displayed.height)
+            if w > 0, h > 0 { videoAspect = w / h }
         }
         addObserver()
         await generateThumbnails(asset: asset, duration: seconds)
