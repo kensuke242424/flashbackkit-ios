@@ -62,6 +62,14 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
 
+            // 「録画不可（この端末では利用できません）」状態を確認するための入口。
+            Button {
+                Flashback.debugPresentReportUnavailable()
+            } label: {
+                Label("録画不可状態を開く", systemImage: "iphone.slash")
+            }
+            .buttonStyle(.bordered)
+
             // 設定画面を確認するための入口。
             Button {
                 Flashback.debugPresentSettings()
@@ -102,6 +110,12 @@ struct ContentView: View {
             if ProcessInfo.processInfo.environment["FLASHBACK_JUST_ENABLED_DEMO"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     Flashback.debugPresentRecordingJustEnabled()
+                }
+            }
+            // FLASHBACK_UNAVAILABLE_DEMO で起動直後に「録画不可」状態を自動提示する。
+            if ProcessInfo.processInfo.environment["FLASHBACK_UNAVAILABLE_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentReportUnavailable()
                 }
             }
             // FLASHBACK_TOAST_DEMO=progress|failure で起動直後にトーストを自動表示する。

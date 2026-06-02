@@ -39,6 +39,15 @@ public extension Flashback {
         FlashbackController.shared.debugPresentReportJustEnabled()
     }
 
+    /// DEBUG 専用: 「録画不可（この端末では利用できません）」状態のレポート UI を表示する。
+    ///
+    /// Simulator / 非対応端末（`isRecordingAvailable()==false`）時の CTA 非表示の案内 UI を
+    /// 確認するための入口。事前に `Flashback.start()` で overlay window が必要。
+    @MainActor
+    static func debugPresentReportUnavailable() {
+        FlashbackController.shared.debugPresentReportUnavailable()
+    }
+
     /// DEBUG 専用: トースト（進行中 / 失敗）を表示する（見た目確認用）。
     /// - Parameter kind: `"failure"` で失敗トースト、それ以外は進行中トースト。
     @MainActor

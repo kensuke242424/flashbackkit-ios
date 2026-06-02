@@ -9,11 +9,14 @@ import AVFoundation
 /// **共有（↑）ひとつ**で OS 標準シート（写真 / ファイル / AirDrop / 他アプリ）へ渡す。
 /// 出口は共有か ✕（キャンセル）のみ。完了ボタン・送信ボタン・成功トーストは持たない。
 ///
-/// クリップが無い場合（録画オフ / Simulator / 録画不可）は **おやすみ状態**として、
-/// 「録画はオフです」の案内＋「録画をオンにする」導線だけを出す（タイトル欄・共有なし）。
-/// その「録画をオンにする」が成立した直後は **録画オン直後（justEnabled）状態**へ移り、
-/// オレンジの録画中マーク＋「録画をオンにしました / ● 録画中」を示す（CTA なし・この回はクリップ無し）。
-/// いずれの空状態でも成果物を確定しない（onReport を発火しない）。
+/// クリップが無い場合は3つの空状態を出し分ける（いずれも成果物を確定しない＝onReport を発火しない）:
+/// - **おやすみ（dormant）**: 録画オフだが端末は録画可能（`isRecordingAvailable()==true`）。
+///   「録画はオフです」＋「録画をオンにする」（再試行 CTA）を出す。
+/// - **録画オン直後（justEnabled）**: 上の CTA が成立した直後。オレンジ録画中マーク＋
+///   「録画をオンにしました / ● 録画中」（CTA なし・この回はまだクリップ無し）。
+/// - **利用不可（unavailable）**: 端末/環境が録画非対応（`isRecordingAvailable()==false`・
+///   Simulator / 非対応端末 / ミラーリング中）。「この端末では画面収録を利用できません」と案内のみ
+///   （押しても成立しないため CTA は出さない）。
 ///
 /// 本ファイルは Presenter（UIKit + SwiftUI 環境）からのみ使われるため UIKit/AVFoundation を前提にする。
 struct ReportView: View {
@@ -47,8 +50,10 @@ struct ReportView: View {
                         titleField
                     } else if settings.recordingJustEnabled {
                         justEnabledInvitation
+                    } else if settings.isRecordingAvailable() {
+                        dormantInvitation        // 録画オフ（拒否など）。再試行できるので CTA あり。
                     } else {
-                        dormantInvitation
+                        unavailableInvitation    // この端末/環境では録画不可。CTA なし。
                     }
                     DeviceInfoSection(device: device)
                 }
@@ -150,6 +155,32 @@ struct ReportView: View {
                 .foregroundStyle(FlashbackColor.action)
             }
             .accessibilityLabel("録画をオンにする")
+        }
+    }
+
+    // MARK: - 録画不可（Simulator / 非対応環境）状態
+
+    /// 端末/環境が画面収録に対応していない（`isRecordingAvailable() == false`）時の空状態。
+    /// 「録画をオンにする」を押しても成立しないため **CTA は出さない**（案内のみ）。
+    /// Simulator・非対応端末・ミラーリング中などが該当する。
+    private var unavailableInvitation: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            placeholderBox {
+                TimeSliceMark.dormantOnSurface()           // グレー休止マーク
+                    .frame(width: 40, height: 40)
+                Text("この端末では画面収録を利用できません")
+                    .font(FlashbackFont.body)
+                    .foregroundStyle(FlashbackColor.secondaryLabel)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 24)
+            }
+
+            // 中立な補足（なぜ不可か）。CTA は出さない。
+            Text("Simulator や画面収録に対応していない環境では録画できません。実機でお試しください。")
+                .font(FlashbackFont.body)
+                .foregroundStyle(FlashbackColor.secondaryLabel)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
