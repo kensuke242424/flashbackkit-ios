@@ -92,7 +92,7 @@ private final class FloatingButtonView: UIView {
     private static let peek: CGFloat = 22          // タック時に画面端へ残す幅
     private static let tuckThreshold: CGFloat = 24 // この距離以上端へ押し込むとタック
     private static let pressDuration: CFTimeInterval = 0.5   // 操作感優先で 0.35→0.5（誤爆しにくく）
-    private static let pressScale: CGFloat = 1.06            // 長押しゲージ満了時の微増スケール
+    private static let pressScale: CGFloat = 1.14            // 長押しゲージ満了時の膨張（手応え強化で 1.06→1.14）
     private let idleAlpha: CGFloat = 0.5   // 待機時の opacity（タック中も同じ）
     private let activeAlpha: CGFloat = 1.0
 
