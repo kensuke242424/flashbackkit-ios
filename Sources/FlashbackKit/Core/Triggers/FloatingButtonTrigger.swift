@@ -1,90 +1,132 @@
 #if canImport(UIKit)
 import UIKit
 
-/// 画面に常駐する小さなフローティングボタン（🐞）でレポート UI を起動するトリガ。
+/// 画面に常駐する小さなフローティングボタン（Time Slice マーク）でレポート UI を起動するトリガ。
 ///
 /// 実体のあるボタン（独立した小さな view）として overlay に載せるため、
 /// `PassthroughWindow.hitTest` がボタン領域だけを拾い、それ以外はホストへ透過する。
 /// 物理的な振りが使えない据え置き端末でも確実に発火する手段。
 ///
 /// 操作性:
-/// - **長押し**（既定 0.6 秒）で起動。袖や手が軽く触れた程度では誤爆しない。
-/// - **ドラッグ**で位置を移動でき、離すと左右どちらか近い端へ吸着する。
+/// - **長押し**（0.5 秒）で起動。押下中はマーク外周にプログレスリングが溜まる。
+///   袖や手が軽く触れた程度では誤爆しない。
+/// - **ドラッグ**で位置を移動でき、離すと左右どちらか近い端へ吸着 / タックする。
 /// - 普段は半透明で控えめ、触れている間だけ濃く表示。
 /// - 初期位置は `FloatingButtonCorner` で四隅から指定可能。
+///
+/// 見た目（README の「オレンジ＝録画中・グレー＝非録画」）:
+/// - 録画中: オレンジ円・白リング・白@0.5 くさび。
+/// - 長押し中: 上に加えてプログレスリング。
+/// - 端タック中: グレー・オレンジ@1.0 くさび（録画は継続）。
+/// - 休止（録画オフ）: グレー・白@0.6 くさび。
 @MainActor
 final class FloatingButtonTrigger: TriggerDetecting {
     var onTrigger: (() -> Void)?
+    /// 長押し開始時（ゲージが溜まり始めた時点）。進行中トーストを早出しするため。
+    var onPressStart: (() -> Void)?
+    /// 長押しが発火せず中断した時（早離し / ドラッグ転化 / 取消）。早出しトーストを消すため。
+    var onPressCancel: (() -> Void)?
 
     private weak var host: UIViewController?
     private let corner: FloatingButtonCorner
+    private let recordingEnabled: Bool
     private var button: FloatingButtonView?
 
-    init(host: UIViewController, corner: FloatingButtonCorner) {
+    init(host: UIViewController, corner: FloatingButtonCorner, recordingEnabled: Bool = true) {
         self.host = host
         self.corner = corner
+        self.recordingEnabled = recordingEnabled
     }
 
     func start() {
         guard button == nil, let hostView = host?.view else { return }
 
-        let button = FloatingButtonView()
+        let button = FloatingButtonView(recordingEnabled: recordingEnabled)
         button.onTrigger = { [weak self] in self?.onTrigger?() }
+        button.onPressStart = { [weak self] in self?.onPressStart?() }
+        button.onPressCancel = { [weak self] in self?.onPressCancel?() }
         hostView.addSubview(button)
         button.place(in: hostView, corner: corner)
         self.button = button
     }
 
+    /// 録画オン/オフ（休止）を切り替える。Settings / 権限状態の反映用。
+    func setRecordingEnabled(_ enabled: Bool) {
+        button?.recordingEnabled = enabled
+    }
+
     func stop() {
         button?.onTrigger = nil
+        button?.onPressStart = nil
+        button?.onPressCancel = nil
         button?.removeFromSuperview()
         button = nil
         onTrigger = nil
+        onPressStart = nil
+        onPressCancel = nil
     }
 }
 
 /// 半透明・ドラッグ可能・長押しで発火するフローティングボタン本体（純 UIKit）。
+/// グリフは Time Slice マーク（リング＋くさび＋ハブ）を CAShapeLayer で描く。
 @MainActor
 private final class FloatingButtonView: UIView {
     var onTrigger: (() -> Void)?
+    /// 長押し開始（ゲージ充填の開始）。/ 中断（未発火で終了）。
+    var onPressStart: (() -> Void)?
+    var onPressCancel: (() -> Void)?
+    /// この押下で発火済みか。touchesEnded での誤キャンセル（トースト消し）を防ぐ。
+    private var didFire = false
+    /// 進行中トーストの早出しを少し遅らせる予約（ドラッグ移動だけの時の一瞬表示を防ぐ）。
+    private var pressStartWork: DispatchWorkItem?
+    private static let toastDelay: CFTimeInterval = 0.18
+
+    /// 録画オン（オレンジ）/ オフ（グレー休止）。変更で見た目を更新する。
+    var recordingEnabled: Bool {
+        didSet { applyAppearance() }
+    }
 
     private static let diameter: CGFloat = 56
+    private static let markDiameter: CGFloat = 36  // ボタン内のマーク径（ratio ≈ 0.64）
     private static let edgeMargin: CGFloat = 16
     private static let peek: CGFloat = 22          // タック時に画面端へ残す幅
     private static let tuckThreshold: CGFloat = 24 // この距離以上端へ押し込むとタック
-    private let idleAlpha: CGFloat = 0.5
+    private static let pressDuration: CFTimeInterval = 0.5   // 操作感優先で 0.35→0.5（誤爆しにくく）
+    private static let pressScale: CGFloat = 1.06            // 長押しゲージ満了時の微増スケール
+    private let idleAlpha: CGFloat = 0.5   // 待機時の opacity（タック中も同じ）
     private let activeAlpha: CGFloat = 1.0
+
+    private static let action = FlashbackColor.actionUIColor
+    private static let slate = FlashbackColor.slateUIColor
+
+    private let ringLayer = CAShapeLayer()
+    private let wedgeLayer = CAShapeLayer()
+    private let hubLayer = CAShapeLayer()
+    private let progressLayer = CAShapeLayer()
 
     private var dragStartCenter: CGPoint = .zero
     private var lastRawCenter: CGPoint = .zero
     private var isTucked = false
     private var tuckedAtMaxX = false
 
-    init() {
+    init(recordingEnabled: Bool = true) {
+        self.recordingEnabled = recordingEnabled
         super.init(frame: CGRect(x: 0, y: 0, width: Self.diameter, height: Self.diameter))
-        backgroundColor = .tintColor
         layer.cornerRadius = Self.diameter / 2
         layer.shadowColor = UIColor.black.cgColor
-        layer.shadowOpacity = 0.3
-        layer.shadowRadius = 4
-        layer.shadowOffset = CGSize(width: 0, height: 2)
+        layer.shadowOpacity = 0.22                 // README: 0 4px 12px rgba(0,0,0,0.22)
+        layer.shadowRadius = 6
+        layer.shadowOffset = CGSize(width: 0, height: 4)
         alpha = idleAlpha
         isAccessibilityElement = true
-        accessibilityLabel = "Flashback レポート"
-        accessibilityHint = "長押しでバグレポートを開く"
+        accessibilityLabel = "Flashback を起動"
+        accessibilityHint = "長押しで起動"
 
-        let icon = UIImageView(image: UIImage(systemName: "ladybug.fill"))
-        icon.tintColor = .white
-        icon.contentMode = .center
-        icon.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(icon)
-        NSLayoutConstraint.activate([
-            icon.centerXAnchor.constraint(equalTo: centerXAnchor),
-            icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
+        setUpMarkLayers()
+        applyAppearance()
 
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
-        longPress.minimumPressDuration = 0.35
+        longPress.minimumPressDuration = Self.pressDuration
         longPress.cancelsTouchesInView = false
         addGestureRecognizer(longPress)
 
@@ -100,6 +142,159 @@ private final class FloatingButtonView: UIView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    // MARK: - Time Slice マーク描画
+
+    private func setUpMarkLayers() {
+        ringLayer.fillColor = UIColor.clear.cgColor
+        ringLayer.strokeColor = UIColor.white.cgColor
+        ringLayer.lineCap = .round
+        hubLayer.fillColor = UIColor.white.cgColor
+        progressLayer.fillColor = UIColor.clear.cgColor
+        progressLayer.strokeColor = UIColor.white.withAlphaComponent(0.9).cgColor
+        progressLayer.lineCap = .round
+        progressLayer.strokeEnd = 0
+        progressLayer.isHidden = true
+        // 順序: リング → くさび → ハブ → プログレス。
+        layer.addSublayer(ringLayer)
+        layer.addSublayer(wedgeLayer)
+        layer.addSublayer(hubLayer)
+        layer.addSublayer(progressLayer)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let center = CGPoint(x: bounds.midX, y: bounds.midY)
+        let k = Self.markDiameter / 64                 // viewBox 64 からのスケール
+        let radius = 20 * k
+        ringLayer.lineWidth = 3.2 * k
+        ringLayer.path = UIBezierPath(arcCenter: center, radius: radius,
+                                      startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
+
+        // くさび: 12 時から反時計回り 66°（左斜め上・巻き戻し方向）。点サンプリングで向きを確定。
+        let wedge = UIBezierPath()
+        wedge.move(to: center)
+        let steps = 48
+        for i in 0...steps {
+            let clock = -(66 * Double(i) / Double(steps)) * .pi / 180
+            wedge.addLine(to: CGPoint(x: center.x + radius * CGFloat(sin(clock)),
+                                      y: center.y - radius * CGFloat(cos(clock))))
+        }
+        wedge.close()
+        wedgeLayer.path = wedge.cgPath
+
+        let hubRadius = 2.6 * k
+        hubLayer.path = UIBezierPath(arcCenter: center, radius: hubRadius,
+                                     startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
+
+        // プログレスリング: ボタン外周のやや内側を 12 時から**反時計回り**に充填（時間を巻き戻す意味）。
+        let progressRadius = bounds.width / 2 - 2
+        progressLayer.lineWidth = 3
+        progressLayer.path = UIBezierPath(arcCenter: center, radius: progressRadius,
+                                          startAngle: -.pi / 2, endAngle: -.pi / 2 - 2 * .pi,
+                                          clockwise: false).cgPath
+    }
+
+    /// 状態（録画中 / 休止 / タック）に応じて背景色・くさび色を反映する。
+    private func applyAppearance() {
+        backgroundColor = (recordingEnabled && !isTucked) ? Self.action : Self.slate
+        let wedgeColor: UIColor
+        if isTucked {
+            wedgeColor = Self.action                       // タック中: オレンジくさび。
+        } else if recordingEnabled {
+            wedgeColor = UIColor.white.withAlphaComponent(0.5)   // 録画中。
+        } else {
+            wedgeColor = UIColor.white.withAlphaComponent(0.6)   // 休止。
+        }
+        wedgeLayer.fillColor = wedgeColor.cgColor
+    }
+
+    // MARK: - 長押しプログレス（ゲージ＋opacity＋微増スケール）
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        didFire = false
+        // タック中のタッチは引き出し用。プログレスは出さない。
+        guard !isTucked else { return }
+        beginPressRamp()
+        // 進行中トーストは少し遅らせて出す（ドラッグ移動だけの時は出る前に取消）。
+        schedulePressStart()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        clearPress(restoreActive: false)
+        cancelPressStart()
+        if !didFire { onPressCancel?() }       // 未発火で離した＝早出しトーストを消す。
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        clearPress(restoreActive: false)
+        cancelPressStart()
+        if !didFire { onPressCancel?() }
+    }
+
+    /// 押下が `toastDelay` 続いたら進行中トーストを出す（ドラッグ転化はその前に取消）。
+    private func schedulePressStart() {
+        pressStartWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.onPressStart?() }
+        pressStartWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.toastDelay, execute: work)
+    }
+
+    private func cancelPressStart() {
+        pressStartWork?.cancel()
+        pressStartWork = nil
+    }
+
+    /// 押下開始: ゲージ充填と同期して opacity（待機→不透明）と微増スケール（→`pressScale`）を
+    /// `pressDuration` かけてランプさせる。3 つが同時に満了＝発火タイミングで頂点になる。
+    private func beginPressRamp() {
+        progressLayer.isHidden = false
+        layer.removeAnimation(forKey: "opacity")
+
+        if UIAccessibility.isReduceMotionEnabled {
+            // 低モーション: アニメせず即時に満ちた状態・フル不透明。
+            progressLayer.strokeEnd = 1
+            alpha = activeAlpha
+            return
+        }
+
+        // ゲージ（外周リング）を pressDuration で線形充填。
+        progressLayer.strokeEnd = 1
+        let fill = CABasicAnimation(keyPath: "strokeEnd")
+        fill.fromValue = 0
+        fill.toValue = 1
+        fill.duration = Self.pressDuration
+        fill.timingFunction = CAMediaTimingFunction(name: .linear)
+        progressLayer.add(fill, forKey: "press")
+
+        // opacity と微増スケールをゲージに同期（線形・満了で頂点）。
+        UIView.animate(withDuration: Self.pressDuration, delay: 0,
+                       options: [.curveLinear, .allowUserInteraction, .beginFromCurrentState]) {
+            self.alpha = self.activeAlpha
+            self.transform = CGAffineTransform(scaleX: Self.pressScale, y: Self.pressScale)
+        }
+    }
+
+    /// 発火時: ゲージを消す。opacity/スケールは満了済みのまま `popScale` が引き継ぐ。
+    private func endPressGauge() {
+        progressLayer.removeAnimation(forKey: "press")
+        progressLayer.isHidden = true
+        progressLayer.strokeEnd = 0
+    }
+
+    /// 押下中断（早離し / 取消 / ドラッグ転化）: ゲージを消し、opacity とスケールを素早く戻す。
+    /// - Parameter restoreActive: ドラッグ転化時は active（不透明）へ、それ以外は待機 alpha へ。
+    private func clearPress(restoreActive: Bool) {
+        endPressGauge()
+        UIView.animate(withDuration: 0.18, delay: 0,
+                       options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]) {
+            self.alpha = restoreActive ? self.activeAlpha : self.idleAlpha
+            self.transform = .identity
+        }
+    }
 
     /// 指定の隅へ初期配置する。
     func place(in container: UIView, corner: FloatingButtonCorner) {
@@ -126,12 +321,13 @@ private final class FloatingButtonView: UIView {
                 if let parent = superview { unTuck(in: parent) }
                 return
             }
-            setActive(true)
+            didFire = true                     // 発火確定。touchesEnded でキャンセル扱いしない。
+            endPressGauge()                    // 満了＝発火。ゲージは満ちて消す（opacity/scale は維持）。
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            popScale()
+            popScale()                         // ランプの微増スケールから発火ポップへ繋ぐ。
             onTrigger?()
         case .ended, .cancelled, .failed:
-            setActive(false)
+            break                              // alpha/scale の後始末は touchesEnded/Cancelled が担う。
         default:
             break
         }
@@ -147,7 +343,10 @@ private final class FloatingButtonView: UIView {
         guard let parent = superview else { return }
         switch recognizer.state {
         case .began:
-            setActive(true)
+            // ドラッグ＝長押しではない。ゲージ/スケールを畳み、不透明（active）に戻す。
+            clearPress(restoreActive: true)
+            cancelPressStart()                  // 出る前のトースト予約を取消（ドラッグ移動だけの時）。
+            if !didFire { onPressCancel?() }    // 既に出ていれば消す。
             dragStartCenter = center
             lastRawCenter = center
         case .changed:
@@ -157,7 +356,8 @@ private final class FloatingButtonView: UIView {
                 let pullOut = tuckedAtMaxX ? -t.x : t.x
                 if pullOut > 40 {
                     isTucked = false
-                    accessibilityHint = "長押しでバグレポートを開く"
+                    applyAppearance()
+                    accessibilityHint = "長押しで起動"
                     // 現在地（端の外）を起点に通常ドラッグへ滑らかに引き継ぐ。
                     dragStartCenter = center
                     lastRawCenter = center
@@ -204,6 +404,7 @@ private final class FloatingButtonView: UIView {
             : -half + Self.peek
         isTucked = true
         tuckedAtMaxX = toMaxEdge
+        applyAppearance()                       // グレー＋オレンジくさびへ。
         accessibilityHint = "タップで表示"
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         // 隠す側は跳ね返りが浅め（damping 高め）で「収まる」感じに。
@@ -214,7 +415,8 @@ private final class FloatingButtonView: UIView {
     private func unTuck(in parent: UIView) {
         guard isTucked else { return }
         isTucked = false
-        accessibilityHint = "長押しでバグレポートを開く"
+        applyAppearance()
+        accessibilityHint = "長押しで起動"
         let target = clampedCenter(CGPoint(x: tuckedAtMaxX ? .greatestFiniteMagnitude : -.greatestFiniteMagnitude,
                                            y: center.y), in: parent)
         // 引き出しは弾みを強めに（damping 低め）でポンッと出す。
@@ -308,6 +510,58 @@ private final class FloatingButtonView: UIView {
         }
     }
 }
+
+#if DEBUG && canImport(SwiftUI)
+import SwiftUI
+
+extension FloatingButtonView {
+    /// プレビュー専用: 状態を直接セットする（タック / 長押しプログレス）。
+    func previewConfigure(tucked: Bool, pressProgress: CGFloat?) {
+        isTucked = tucked
+        applyAppearance()
+        alpha = tucked ? idleAlpha : activeAlpha
+        if let pressProgress {
+            progressLayer.isHidden = false
+            progressLayer.strokeEnd = pressProgress
+        }
+    }
+}
+
+/// FAB の4状態を Xcode プレビューで確認するためのラッパ。
+private struct FABStatePreview: UIViewRepresentable {
+    var recording: Bool
+    var tucked: Bool = false
+    var pressProgress: CGFloat? = nil
+
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        let fab = FloatingButtonView(recordingEnabled: recording)
+        fab.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(fab)
+        NSLayoutConstraint.activate([
+            fab.widthAnchor.constraint(equalToConstant: 56),
+            fab.heightAnchor.constraint(equalToConstant: 56),
+            fab.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            fab.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+        ])
+        fab.previewConfigure(tucked: tucked, pressProgress: pressProgress)
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+#Preview("FAB 4状態") {
+    HStack(spacing: 20) {
+        FABStatePreview(recording: true)                          // 録画中
+        FABStatePreview(recording: true, pressProgress: 0.65)     // 長押し中
+        FABStatePreview(recording: true, tucked: true)            // 端タック
+        FABStatePreview(recording: false)                         // 休止
+    }
+    .frame(height: 90)
+    .padding(40)
+}
+#endif
 #else
 final class FloatingButtonTrigger: TriggerDetecting {
     var onTrigger: (() -> Void)?

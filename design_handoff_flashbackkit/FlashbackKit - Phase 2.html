@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FlashbackKit — Phase 2</title>
+<style>
+  :root {
+    --sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro", "Hiragino Sans", system-ui, sans-serif;
+    --round: "SF Pro Rounded", ui-rounded, -apple-system, "Hiragino Maru Gothic ProN", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "Roboto Mono", monospace;
+  }
+  html, body { margin: 0; padding: 0; height: 100%; background: #f0eee9; }
+  * { -webkit-font-smoothing: antialiased; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="directions.jsx"></script>
+<script type="text/babel" src="phase2.jsx"></script>
+<script type="text/babel" src="halfmodal.jsx"></script>
+<script type="text/babel">
+  const { DesignCanvas, DCSection, DCArtboard } = window;
+  const Q = window.DIRECTIONS[2]; // Quiet
+
+  function App() {
+    return (
+      <DesignCanvas>
+        <DCSection id="brand" title="ブランドシステム & トークン" subtitle="Quiet 確定 — 実装トークン">
+          <DCArtboard id="tokens" label="トークン" width={1040} height={720}>
+            <TokenBoard />
+          </DCArtboard>
+          <DCArtboard id="swift" label="SwiftUI トークン表" width={580} height={724}>
+            <SwiftTokenBoard />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="reportview" title="ReportView 完成形（確定：フルスクリーン）" subtitle="ライト / ダーク × クリップ 有 / 無">
+          <DCArtboard id="rv-lc" label="ライト・クリップ有" width={286} height={600}>
+            <PhoneReportView d={Q} scheme="light" />
+          </DCArtboard>
+          <DCArtboard id="rv-dc" label="ダーク・クリップ有" width={286} height={600}>
+            <PhoneReportView d={Q} scheme="dark" />
+          </DCArtboard>
+          <DCArtboard id="rv-le" label="ライト・クリップ無" width={286} height={600}>
+            <PhoneReportView d={Q} scheme="light" empty={true} />
+          </DCArtboard>
+          <DCArtboard id="rv-de" label="ダーク・クリップ無" width={286} height={600}>
+            <PhoneReportView d={Q} scheme="dark" empty={true} />
+          </DCArtboard>
+          <DCArtboard id="rv-on-l" label="ライト・録画オン直後" width={286} height={600}>
+            <PhoneReportView d={Q} scheme="light" empty={true} justEnabled={true} />
+          </DCArtboard>
+          <DCArtboard id="rv-on-d" label="ダーク・録画オン直後" width={286} height={600}>
+            <PhoneReportView d={Q} scheme="dark" empty={true} justEnabled={true} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="settings" title="設定画面" subtitle="右上の歯車から遷移 — ボタン表示・保持秒数">
+          <DCArtboard id="set-l" label="ライト" width={286} height={738}>
+            <PhoneSettingsView d={Q} scheme="light" seconds={20} showButton={true} />
+          </DCArtboard>
+          <DCArtboard id="set-d" label="ダーク" width={286} height={738}>
+            <PhoneSettingsView d={Q} scheme="dark" seconds={20} showButton={true} />
+          </DCArtboard>
+          <DCArtboard id="set-off" label="権限オフ・ボタン非表示" width={286} height={738}>
+            <PhoneSettingsView d={Q} scheme="light" seconds={60} showButton={false} granted={false} />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="trigger" title="トリガー & 付随 UI" subtitle="FAB 状態・トースト・準備中">
+          <DCArtboard id="trigger-ui" label="トリガー / トースト" width={860} height={452}>
+            <TriggerUIBoard />
+          </DCArtboard>
+          <DCArtboard id="fab-size" label="FAB とマークの比率" width={820} height={340}>
+            <FabSizeBoard />
+          </DCArtboard>
+          <DCArtboard id="dorm-wedge" label="休止FABの扇カラー" width={900} height={440}>
+            <DormWedgeBoard />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="altmodal" title="参考案（不採用）：ハーフモーダル ReportView" subtitle="フルスクリーンを主案に確定。本案は今後の選択肢として保存">
+          <DCArtboard id="halfmodal-board" label="ハーフモーダル案" width={1180} height={960}>
+            <HalfModalBoard />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="flow" title="UX フロー" subtitle="発火 → 書き出し → トリム → 共有（＋例外）">
+          <DCArtboard id="flow-board" label="フロー全体" width={1200} height={944}>
+            <FlowBoard />
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="dormant" title="権限オフ（おやすみ）時の UX" subtitle="エラーで責めない・休止FAB＋バイパス">
+          <DCArtboard id="dormant-board" label="おやすみ / バイパス" width={1240} height={812}>
+            <DormantBoard />
+          </DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

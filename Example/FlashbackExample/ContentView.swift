@@ -4,7 +4,7 @@ import FlashbackKit
 /// FlashbackKit の仮UIループを確認するためのホスト画面。
 ///
 /// 起動時に `Flashback.start()` を呼ぶと、SDK が overlay window に
-/// 既定トリガ（シェイク / フローティングボタン 🐞）を仕込む。
+/// 既定トリガ（シェイク / フローティングボタン）を仕込む。
 /// いずれかのトリガ → ReportView → タイトル入力 → 共有 でループが回る。
 ///
 /// 画面中央に「起動からの経過時間」をミリ秒単位で表示する。録画クリップを後で
@@ -30,7 +30,7 @@ struct ContentView: View {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
 
-            Text("端末を振る（手持ち）／ 🐞 ボタンを長押し（据え置き）でレポート UI を開く")
+            Text("端末を振る（手持ち）／ フローティングボタンを長押し（据え置き）でレポート UI を開く")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -45,6 +45,30 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .padding(.top, 8)
+
+            // クリップ無し（録画オフ）時の「おやすみ」案内 UI を確認するための入口。
+            Button {
+                Flashback.debugPresentEmptyReport()
+            } label: {
+                Label("おやすみ状態を開く", systemImage: "moon")
+            }
+            .buttonStyle(.bordered)
+
+            // 「録画オン直後」状態（オレンジマーク＋録画中）を確認するための入口。
+            Button {
+                Flashback.debugPresentRecordingJustEnabled()
+            } label: {
+                Label("録画オン直後を開く", systemImage: "record.circle")
+            }
+            .buttonStyle(.bordered)
+
+            // 設定画面を確認するための入口。
+            Button {
+                Flashback.debugPresentSettings()
+            } label: {
+                Label("設定を開く", systemImage: "gearshape")
+            }
+            .buttonStyle(.bordered)
             #endif
         }
         .onAppear {
@@ -66,6 +90,30 @@ struct ContentView: View {
             if ProcessInfo.processInfo.environment["FLASHBACK_TRIM_DEMO"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     Flashback.debugPresentSampleReport()
+                }
+            }
+            // FLASHBACK_EMPTY_DEMO が立っていれば起動直後に「おやすみ」状態を自動提示する。
+            if ProcessInfo.processInfo.environment["FLASHBACK_EMPTY_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentEmptyReport()
+                }
+            }
+            // FLASHBACK_JUST_ENABLED_DEMO で起動直後に「録画オン直後」状態を自動提示する。
+            if ProcessInfo.processInfo.environment["FLASHBACK_JUST_ENABLED_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentRecordingJustEnabled()
+                }
+            }
+            // FLASHBACK_TOAST_DEMO=progress|failure で起動直後にトーストを自動表示する。
+            if let toastKind = ProcessInfo.processInfo.environment["FLASHBACK_TOAST_DEMO"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    Flashback.debugShowToast(toastKind)
+                }
+            }
+            // FLASHBACK_SETTINGS_DEMO で起動直後に設定画面を自動提示する。
+            if ProcessInfo.processInfo.environment["FLASHBACK_SETTINGS_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentSettings()
                 }
             }
             #endif

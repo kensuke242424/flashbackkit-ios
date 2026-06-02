@@ -22,7 +22,7 @@ public struct FlashbackTrigger: OptionSet, Sendable {
     /// Simulator では発火しない。
     public static let shake = FlashbackTrigger(rawValue: 1 << 0)
 
-    /// 画面に常駐する小さなフローティングボタン（🐞）。長押しで起動。
+    /// 画面に常駐する小さなフローティングボタン（Time Slice マーク）。長押しで起動。
     /// 実体のあるボタンなので確実に発火し、ホスト操作も阻害しない。
     /// スタンド固定など据え置き利用での確実な手段。ドラッグで位置を動かせる。
     public static let floatingButton = FlashbackTrigger(rawValue: 1 << 1)

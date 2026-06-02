@@ -34,28 +34,41 @@ struct VideoTrimmerView: View {
                 PlayerLayerView(player: player)
                     .aspectRatio(videoAspect, contentMode: .fit)
                     .frame(maxHeight: 280)
-                    .background(.black, in: RoundedRectangle(cornerRadius: 10))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .background(.black, in: RoundedRectangle(cornerRadius: 12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay {
                         if duration == 0 {
                             ProgressView().tint(.white)
+                        } else if !isPlaying {
+                            // 中央の再生アフォーダンス（ポスター表示）。
+                            Button(action: togglePlay) {
+                                Image(systemName: "play.fill")
+                                    .font(.title3)
+                                    .foregroundStyle(.white)
+                                    .padding(16)
+                                    .background(.black.opacity(0.35), in: Circle())
+                            }
+                            .accessibilityLabel("再生")
                         }
                     }
                 Spacer(minLength: 0)
             }
 
             HStack(spacing: 12) {
-                Button {
-                    togglePlay()
-                } label: {
-                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.title2)
+                // 小さな円形オレンジ再生ボタン（30pt）。
+                Button(action: togglePlay) {
+                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(FlashbackColor.onAction)
+                        .frame(width: 30, height: 30)
+                        .background(FlashbackColor.action, in: Circle())
                 }
                 .disabled(duration == 0)
+                .accessibilityLabel(isPlaying ? "一時停止" : "再生")
 
                 Text(rangeLabel)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .font(FlashbackFont.timecode)
+                    .foregroundStyle(FlashbackColor.secondaryLabel)
                 Spacer()
             }
 
@@ -75,7 +88,7 @@ struct VideoTrimmerView: View {
 
     private var rangeLabel: String {
         guard duration > 0 else { return "—" }
-        return "\(format(selection.lowerBound)) 〜 \(format(selection.upperBound))  (\(format(selection.upperBound - selection.lowerBound)))"
+        return "\(format(selection.lowerBound)) ~ \(format(selection.upperBound))  (\(format(selection.upperBound - selection.lowerBound)))"
     }
 
     private func format(_ seconds: Double) -> String {
@@ -224,19 +237,23 @@ private struct FilmstripTrimmer: View {
                 dim(width: startX, height: height)
                 dim(width: width - endX, height: height).offset(x: endX)
 
-                // 選択枠。
+                // 選択枠: 背景色の外輪（2pt）＋アクション色の枠（2.5pt）。
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.yellow, lineWidth: 3)
+                    .stroke(FlashbackColor.background, lineWidth: 6)
+                    .frame(width: max(endX - startX, 0), height: height)
+                    .offset(x: startX)
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(FlashbackColor.action, lineWidth: 2.5)
                     .frame(width: max(endX - startX, 0), height: height)
                     .offset(x: startX)
 
                 handle(at: startX, height: height, usable: usable, isStart: true)
                 handle(at: endX, height: height, usable: usable, isStart: false)
 
-                // 再生ヘッド。
+                // 再生ヘッド（label 色の細い縦バー）。
                 if duration > 0 {
                     Rectangle()
-                        .fill(.white)
+                        .fill(FlashbackColor.label)
                         .frame(width: 2, height: height)
                         .offset(x: handleWidth + xOffset(for: playhead, usable: usable))
                         .allowsHitTesting(false)
@@ -278,12 +295,13 @@ private struct FilmstripTrimmer: View {
     /// 指の絶対位置（"strip" 座標）で追従するハンドル。translation 累積のドリフトを避ける。
     private func handle(at x: CGFloat, height: CGFloat, usable: CGFloat, isStart: Bool) -> some View {
         RoundedRectangle(cornerRadius: 4)
-            .fill(Color.yellow)
+            .fill(FlashbackColor.action)
             .frame(width: handleWidth, height: height)
             .overlay(
-                Capsule().fill(.black.opacity(0.5)).frame(width: 3, height: 18)
+                Capsule().fill(FlashbackColor.onAction).frame(width: 3, height: 18)
             )
             .offset(x: x - handleWidth / 2)
+            .accessibilityLabel(isStart ? "開始位置" : "終了位置")
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("strip"))
                     .onChanged { value in
