@@ -80,11 +80,11 @@ final class FlashbackController {
         #endif
     }
 
-    /// 保持秒数を反映する（設定の選択）。バッファを張り直して即時に適用する。
+    /// 保持秒数を反映する（設定の選択）。ReplayKit を止めず ring を差し替えて即時適用する。
+    /// 旧実装の stop→即 start は ReplayKit 停止の非同期性でクラッシュしたため変更。
     private func setRetention(_ seconds: Int) {
         configuration.bufferSeconds = TimeInterval(seconds)
-        recorder.stopBuffering()
-        recorder.startBuffering(seconds: configuration.bufferSeconds)
+        recorder.changeBufferSeconds(configuration.bufferSeconds)
     }
 
     /// 録画を再試行する（拒否後の後付け許可 / おやすみ状態の「録画をオンにする」）。
@@ -112,8 +112,12 @@ final class FlashbackController {
         let fab = FloatingButtonTrigger(host: host, corner: configuration.floatingButtonCorner)
         fab.onTrigger = { [weak self] in self?.handleTrigger() }
         // 進行中トーストは長押し開始時点で早出し（発火直後はモーダルで一瞬になり見えないため）。
+        // ただし**録画OFF時は出さない**（書き出すものが無く、おやすみ案内へ直行するため・README 準拠）。
         // 未発火で中断（早離し / ドラッグ）したら消す。
-        fab.onPressStart = { [weak self] in self?.presenter.showProgress("記憶を辿っています…") }
+        fab.onPressStart = { [weak self] in
+            guard let self, self.recorder.isRecording else { return }
+            self.presenter.showProgress("記憶を辿っています…")
+        }
         fab.onPressCancel = { [weak self] in self?.presenter.hideToast() }
         fab.start()
         floatingButtonTrigger = fab
@@ -172,6 +176,12 @@ final class FlashbackController {
     /// - 録画不可/オフ（`recordingUnavailable`）: トースト無しで おやすみ ReportView へ。
     /// - その他の書き出し失敗: 「記憶の書き出しに失敗しました」＋再試行（自動では閉じない）。
     private func handleTrigger() {
+        // 録画OFF: 書き出すものが無い。トーストを出さず（早出し分も消し）おやすみ案内へ直行。
+        guard recorder.isRecording else {
+            presenter.hideToast()
+            present(rawClip: nil)
+            return
+        }
         presenter.showProgress("記憶を辿っています…")
         Task {
             do {

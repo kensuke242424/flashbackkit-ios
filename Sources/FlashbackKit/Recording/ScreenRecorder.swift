@@ -16,7 +16,12 @@ import AVFoundation
 @MainActor
 final class ScreenRecorder {
     private let recorder = RPScreenRecorder.shared()
+    /// 現在の ring（@MainActor 側の参照。書き出し / 後始末用）。
     private var ring: SegmentRingWriter?
+    /// capture ハンドラ（背景スレッド）が触れる「現在の ring」の保持箱。
+    /// ring をロック越しに原子的に差し替えられるので、**ReplayKit を止めずに**保持秒数を
+    /// 変更できる（古い stop→即 start の churn を避ける）。
+    private let ringHolder = RingHolder()
     private var isCapturing = false
 
     /// 画面録画が利用可能か（Simulator / 通話中 / 別アプリ録画中などは false）。
@@ -47,15 +52,19 @@ final class ScreenRecorder {
         recorder.isMicrophoneEnabled = false               // 映像のみ（mic 権限不要）
         let ring = SegmentRingWriter(bufferSeconds: seconds)
         self.ring = ring
+        ringHolder.set(ring)
         isCapturing = true
 
+        // self を捕捉しないよう holder を local に束ねて渡す（holder は Sendable）。
+        let holder = ringHolder
         recorder.startCapture(handler: { @Sendable sampleBuffer, bufferType, error in
             // 背景スレッドで呼ばれる。@Sendable で main-actor 隔離を外すこと。
             // 付けないとクロージャが @MainActor 隔離を継承し、ReplayKit が背景スレッドで
             // 呼んだ瞬間に "Block was expected to execute on queue [main-thread]" で trap する。
             // CMSampleBuffer は非 Sendable なので ingest 内で box 化して serial queue へ渡す。
+            // ring は holder 経由で読む（保持秒数変更で差し替わっても・停止後 nil でも安全）。
             guard error == nil else { return }
-            ring.ingest(sampleBuffer, type: bufferType)
+            holder.ingest(sampleBuffer, type: bufferType)
         }, completionHandler: { @Sendable error in
             // ハンドラには weak self だけを捕捉し（クロージャを box 化しない）、結果は
             // @MainActor へ hop してから self のプロパティ経由で通知する。
@@ -75,9 +84,26 @@ final class ScreenRecorder {
         })
     }
 
+    /// 保持秒数を変更する。**ReplayKit のキャプチャは止めず**、ring だけを差し替える。
+    /// 録画中でなければ何もしない（次回の `startBuffering` が新しい秒数で開始する）。
+    ///
+    /// 旧実装の `stop→即 start`（ReplayKit を止めて即再開）は、停止が非同期なため
+    /// 「停止完了前の再 start」「古いハンドラが破棄済み ring を触る」競合でクラッシュした。
+    /// ring 差し替えなら capture は連続したまま、以降のサンプルが新 ring に流れる
+    /// （差し替え時点のバッファはリセットされる＝保持長変更の挙動として妥当）。
+    func changeBufferSeconds(_ seconds: TimeInterval) {
+        guard isCapturing else { return }
+        let old = ring
+        let newRing = SegmentRingWriter(bufferSeconds: seconds)
+        ring = newRing
+        ringHolder.set(newRing)                            // 以降のサンプルは新 ring へ（原子的）
+        old?.teardown()                                    // 旧 ring を確定・破棄（capture は止めない）
+    }
+
     func stopBuffering() {
         guard isCapturing else { return }                  // 冪等
         isCapturing = false
+        ringHolder.set(nil)                                // 在庫サンプルを以降ドロップ（破棄済み ring を触らせない）
         recorder.stopCapture { _ in }
         ring?.teardown()
         ring = nil
@@ -87,6 +113,24 @@ final class ScreenRecorder {
     func exportBufferedClip() async throws -> URL {
         guard let ring, isCapturing else { throw FlashbackError.recordingUnavailable }
         return try await ring.export()
+    }
+}
+
+/// capture ハンドラ（背景スレッド・`@Sendable`）から触れる「現在の ring」の保持箱。
+/// ロックで ring の差し替えを原子化し、録画を止めずに保持秒数変更（ring 入れ替え）と
+/// 停止後のサンプルドロップ（ring=nil）を安全に行えるようにする。
+private final class RingHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ring: SegmentRingWriter?
+
+    func set(_ newRing: SegmentRingWriter?) {
+        lock.lock(); defer { lock.unlock() }
+        ring = newRing
+    }
+
+    func ingest(_ sampleBuffer: CMSampleBuffer, type: RPSampleBufferType) {
+        lock.lock(); let current = ring; lock.unlock()
+        current?.ingest(sampleBuffer, type: type)
     }
 }
 
@@ -113,6 +157,8 @@ final class SegmentRingWriter: @unchecked Sendable {
     private var videoInput: AVAssetWriterInput?
     private var currentSegmentStart: CMTime = .invalid
     private var segmentURLs: [URL] = []
+    /// teardown 済みフラグ。確定後に遅れて届くサンプルでセグメントを作り直さないためのガード。
+    private var tornDown = false
 
     init(bufferSeconds: TimeInterval) {
         let seg = max(2, bufferSeconds / 6)                // 窓を ~6 分割
@@ -129,6 +175,7 @@ final class SegmentRingWriter: @unchecked Sendable {
     }
 
     private func append(_ sb: CMSampleBuffer) {
+        guard !tornDown else { return }                    // 確定後の遅延サンプルは捨てる
         guard CMSampleBufferDataIsReady(sb) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sb)
 
@@ -231,6 +278,7 @@ final class SegmentRingWriter: @unchecked Sendable {
 
     func teardown() {
         queue.async { [self] in
+            tornDown = true
             finalizeCurrent {
                 for url in self.segmentURLs {
                     try? FileManager.default.removeItem(at: url)
@@ -302,6 +350,7 @@ final class ScreenRecorder {
     var isRecording: Bool { false }
     var onCaptureStarted: ((Bool) -> Void)?
     func startBuffering(seconds: TimeInterval) {}
+    func changeBufferSeconds(_ seconds: TimeInterval) {}
     func stopBuffering() {}
     func exportBufferedClip() async throws -> URL { throw FlashbackError.notImplemented }
 }
