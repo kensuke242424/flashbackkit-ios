@@ -69,36 +69,28 @@ struct SettingsView: View {
     private var permissionSection: some View {
         Section {
             HStack {
-                Text("画面収録の権限")
+                Text("画面収録")
                     .foregroundStyle(FlashbackColor.label)
                 Spacer()
                 if store.isRecordingAvailable() {
-                    Text("許可済み").foregroundStyle(FlashbackColor.success)
+                    Text("利用可能").foregroundStyle(FlashbackColor.success)
                 } else {
-                    Text("未許可").foregroundStyle(FlashbackColor.danger)
+                    Text("利用不可").foregroundStyle(FlashbackColor.danger)
                 }
             }
+            // iOS 設定にトグルが無いため、deep-link ではなく録画の再試行を提供する。
             Button {
-                openSystemSettings()
+                store.retryRecording()
             } label: {
-                HStack {
-                    Text("iOS の設定を開く")
-                    Spacer()
-                    Image(systemName: "arrow.up.forward")
-                }
-                .foregroundStyle(FlashbackColor.settingsLink)   // 青リンク
-                .contentShape(Rectangle())
+                Text("録画を有効にする")
+                    .foregroundStyle(FlashbackColor.settingsLink)   // 青
+                    .contentShape(Rectangle())
             }
         } header: {
             Text("録画")
         } footer: {
-            Text("画面収録が許可されていないとクリップを保存できません。iOS の設定 → プライバシーで許可してください。")
+            Text("画面収録の許可はアプリ起動時に一度だけ確認されます（iOS の仕様上、設定での事前許可はできません）。拒否した場合は「録画を有効にする」で再試行するか、アプリを再起動してください。")
         }
-    }
-
-    private func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
     }
 }
 #endif

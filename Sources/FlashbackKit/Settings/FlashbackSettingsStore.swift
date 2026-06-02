@@ -24,19 +24,28 @@ final class FlashbackSettingsStore: ObservableObject {
 
     private let onFloatingButtonVisibleChanged: (Bool) -> Void
     private let onRetentionChanged: (Int) -> Void
+    private let onRetryRecording: () -> Void
 
     init(
         floatingButtonVisible: Bool,
         retentionSeconds: Int,
         isRecordingAvailable: @escaping () -> Bool,
         onFloatingButtonVisibleChanged: @escaping (Bool) -> Void,
-        onRetentionChanged: @escaping (Int) -> Void
+        onRetentionChanged: @escaping (Int) -> Void,
+        onRetryRecording: @escaping () -> Void
     ) {
         self.floatingButtonVisible = floatingButtonVisible
         self.retentionSeconds = retentionSeconds
         self.isRecordingAvailable = isRecordingAvailable
         self.onFloatingButtonVisibleChanged = onFloatingButtonVisibleChanged
         self.onRetentionChanged = onRetentionChanged
+        self.onRetryRecording = onRetryRecording
+    }
+
+    /// 録画（`startCapture`）を再試行する。拒否後の後付け許可 / おやすみ状態の「録画をオンにする」用。
+    /// iOS の仕様上、許可ダイアログはアプリ起動時に出る。再試行で再度出る場合もある（版依存）。
+    func retryRecording() {
+        onRetryRecording()
     }
 }
 #endif

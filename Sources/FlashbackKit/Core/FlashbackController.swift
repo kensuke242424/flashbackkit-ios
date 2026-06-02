@@ -39,7 +39,8 @@ final class FlashbackController {
             retentionSeconds: Int(configuration.bufferSeconds),
             isRecordingAvailable: { [weak self] in self?.recorder.isAvailable ?? false },
             onFloatingButtonVisibleChanged: { [weak self] in self?.setFloatingButton($0) },
-            onRetentionChanged: { [weak self] in self?.setRetention($0) }
+            onRetentionChanged: { [weak self] in self?.setRetention($0) },
+            onRetryRecording: { [weak self] in self?.retryRecording() }
         )
 
         // シェイクは即時に配線。FAB は動的 add/remove のため別管理。
@@ -83,6 +84,13 @@ final class FlashbackController {
     private func setRetention(_ seconds: Int) {
         configuration.bufferSeconds = TimeInterval(seconds)
         recorder.stopBuffering()
+        recorder.startBuffering(seconds: configuration.bufferSeconds)
+    }
+
+    /// 録画を再試行する（拒否後の後付け許可 / おやすみ状態の「録画をオンにする」）。
+    /// `startBuffering` は冪等。録画が止まっている（拒否 / 未開始）時のみ `startCapture` を
+    /// 再実行し、iOS の許可ダイアログが再度出ることを狙う（出ない版ではアプリ再起動が必要）。
+    private func retryRecording() {
         recorder.startBuffering(seconds: configuration.bufferSeconds)
     }
 

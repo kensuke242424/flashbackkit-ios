@@ -145,8 +145,8 @@ struct ReportView: View {
                 .foregroundStyle(FlashbackColor.secondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // 録画をオンにする（橙・設定へ誘導）。
-            Button { showingSettings = true } label: {
+            // 録画をオンにする（橙・録画を再試行＝拒否後の後付け許可を狙う）。
+            Button { settings.retryRecording() } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "record.circle")
                     Text("録画をオンにする")
