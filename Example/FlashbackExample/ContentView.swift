@@ -82,6 +82,12 @@ struct ContentView: View {
                     Flashback.debugPresentEmptyReport()
                 }
             }
+            // FLASHBACK_TOAST_DEMO=progress|failure で起動直後にトーストを自動表示する。
+            if let toastKind = ProcessInfo.processInfo.environment["FLASHBACK_TOAST_DEMO"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    Flashback.debugShowToast(toastKind)
+                }
+            }
             #endif
         }
     }

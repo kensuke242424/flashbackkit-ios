@@ -58,20 +58,45 @@ final class FlashbackController {
     func debugPresentReport(clipURL: URL?) {
         present(rawClip: clipURL)
     }
+
+    /// DEBUG 専用: 進行中トーストを表示する（見た目確認用）。
+    func debugShowProgressToast() {
+        presenter.showProgress("記憶を辿っています…")
+    }
+
+    /// DEBUG 専用: 失敗トーストを表示する（再試行はトーストを閉じるだけ）。
+    func debugShowFailureToast() {
+        presenter.showFailure("記憶の書き出しに失敗しました") { [weak self] in
+            self?.presenter.hideToast()
+        }
+    }
     #endif
 
-    /// トリガー（シェイク / フローティングボタン）→ 直前クリップを書き出してから
-    /// プレビュー＋トリミング付きのレポート入力 UI を提示。
+    /// トリガー（シェイク / フローティングボタン）→ 進行中トーストを出して直前クリップを
+    /// 書き出し → プレビュー＋トリミング付きのレポート UI を提示。
+    ///
+    /// トースト方針（README 準拠・成功トーストは出さない）:
+    /// - 書き出し中: 「記憶を辿っています…」（オレンジのスピナー）。
+    /// - 成功: トーストを消して ReportView（クリップ有）。
+    /// - 録画不可/オフ（`recordingUnavailable`）: トースト無しで おやすみ ReportView へ。
+    /// - その他の書き出し失敗: 「記憶の書き出しに失敗しました」＋再試行（自動では閉じない）。
     private func handleTrigger() {
-        let recorder = self.recorder
-        let presenter = self.presenter
-        presenter.showStatus("録画を準備中…")
-
+        presenter.showProgress("記憶を辿っています…")
         Task {
-            // 書き出せなければ nil（クリップ無し＝コメントのみのフォール）。
-            let clipURL = try? await recorder.exportBufferedClip()
-            presenter.showStatus("")
-            self.present(rawClip: clipURL)
+            do {
+                let clipURL = try await recorder.exportBufferedClip()
+                presenter.hideToast()
+                present(rawClip: clipURL)
+            } catch FlashbackError.recordingUnavailable {
+                // 録画オフ / Simulator / 直前バッファ無し: 罰を与えず おやすみ案内へ（トースト無し）。
+                presenter.hideToast()
+                present(rawClip: nil)
+            } catch {
+                FlashbackLog.report.error("クリップ書き出しに失敗: \(error.localizedDescription, privacy: .public)")
+                presenter.showFailure("記憶の書き出しに失敗しました") { [weak self] in
+                    self?.handleTrigger()                      // 再試行 = 書き出しからやり直す。
+                }
+            }
         }
     }
 

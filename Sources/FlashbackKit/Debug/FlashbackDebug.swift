@@ -29,5 +29,16 @@ public extension Flashback {
     static func debugPresentEmptyReport() {
         FlashbackController.shared.debugPresentReport(clipURL: nil)
     }
+
+    /// DEBUG 専用: トースト（進行中 / 失敗）を表示する（見た目確認用）。
+    /// - Parameter kind: `"failure"` で失敗トースト、それ以外は進行中トースト。
+    @MainActor
+    static func debugShowToast(_ kind: String) {
+        if kind == "failure" {
+            FlashbackController.shared.debugShowFailureToast()
+        } else {
+            FlashbackController.shared.debugShowProgressToast()
+        }
+    }
 }
 #endif

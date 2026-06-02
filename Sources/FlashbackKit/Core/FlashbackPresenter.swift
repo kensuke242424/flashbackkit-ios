@@ -82,10 +82,19 @@ final class FlashbackPresenter {
         reportHost = nil
     }
 
-    /// 画面上に一時的なステータス文言（トースト）を出す。送信中／結果表示に使う。
-    /// 空文字を渡すと非表示にする。
-    func showStatus(_ message: String) {
-        model.status = message.isEmpty ? nil : message
+    /// 進行中トースト（オレンジのスピナー）。書き出し中に出す。例:「記憶を辿っています…」。
+    func showProgress(_ message: String) {
+        model.toast = .progress(message)
+    }
+
+    /// 失敗トースト（赤アイコン＋青「再試行」）。自動では閉じない。
+    func showFailure(_ message: String, onRetry: @escaping () -> Void) {
+        model.toast = .failure(message: message, onRetry: onRetry)
+    }
+
+    /// トーストを消す。
+    func hideToast() {
+        model.toast = nil
     }
 
     // MARK: - 設置
@@ -93,17 +102,17 @@ final class FlashbackPresenter {
     private func installStatusOverlay(in root: UIViewController) {
         let overlay = UIHostingController(rootView: StatusOverlay(model: model))
         overlay.view.backgroundColor = .clear
-        // トーストはタップを奪わない（常に背面でパススルー）。
-        overlay.view.isUserInteractionEnabled = false
         overlay.view.translatesAutoresizingMaskIntoConstraints = false
-
+        // 下中央にトースト分だけ載せる（コンテンツサイズ）。失敗トーストの「再試行」を
+        // タップできるよう操作は有効。トースト以外の領域は覆わないのでホスト/FAB を妨げない。
         root.addChild(overlay)
         root.view.addSubview(overlay.view)
+        let guide = root.view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            overlay.view.topAnchor.constraint(equalTo: root.view.topAnchor),
-            overlay.view.bottomAnchor.constraint(equalTo: root.view.bottomAnchor),
-            overlay.view.leadingAnchor.constraint(equalTo: root.view.leadingAnchor),
-            overlay.view.trailingAnchor.constraint(equalTo: root.view.trailingAnchor),
+            overlay.view.centerXAnchor.constraint(equalTo: root.view.centerXAnchor),
+            overlay.view.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -36),
+            overlay.view.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 16),
+            overlay.view.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -16),
         ])
         overlay.didMove(toParent: root)
     }
@@ -129,41 +138,94 @@ private final class PassthroughWindow: UIWindow {
     }
 }
 
+/// トーストの内容（README 準拠で2種のみ）。
+enum ToastContent {
+    /// 進行中（オレンジのスピナー）。例:「記憶を辿っています…」。
+    case progress(String)
+    /// 失敗（赤アイコン＋青「再試行」）。自動では閉じない。
+    case failure(message: String, onRetry: () -> Void)
+}
+
 /// overlay UI の状態。
 @MainActor
 private final class OverlayModel: ObservableObject {
-    @Published var status: String?
+    @Published var toast: ToastContent?
+
+    /// アニメーション差分用キー（`ToastContent` は Equatable でないため）。
+    var toastKey: String {
+        switch toast {
+        case .progress(let m): return "p:\(m)"
+        case .failure(let m, _): return "f:\(m)"
+        case nil: return ""
+        }
+    }
 }
 
-/// 送信ステータス（トースト）を画面下中央に出す非インタラクティブ overlay。
+/// 画面下中央にトーストを出す overlay。失敗トーストの「再試行」だけタップを受ける。
 private struct StatusOverlay: View {
     @ObservedObject var model: OverlayModel
 
     var body: some View {
-        VStack {
-            Spacer()
-            if let status = model.status {
-                StatusToast(text: status)
-                    .padding(.bottom, 120)
-                    .transition(.opacity)
+        Group {
+            switch model.toast {
+            case .progress(let message):
+                ToastCapsule {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(FlashbackColor.action)              // オレンジのスピナー
+                    Text(message)
+                }
+            case .failure(let message, let onRetry):
+                ToastCapsule {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(FlashbackColor.danger)   // 赤
+                    Text(message)
+                    Button(action: onRetry) {
+                        HStack(spacing: 2) {
+                            Text("再試行")
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        .foregroundStyle(FlashbackColor.settingsLink)   // 青
+                    }
+                    .accessibilityLabel("再試行")
+                }
+            case nil:
+                EmptyView()
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.default, value: model.status)
+        .transition(.opacity)
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: model.toastKey)
     }
 }
 
-/// 送信中／結果を伝える軽量トースト。
-private struct StatusToast: View {
-    let text: String
+/// トーストの共通カプセル（角丸20相当のピル・12pt・反転背景）。
+private struct ToastCapsule<Content: View>: View {
+    @Environment(\.colorScheme) private var scheme
+    @ViewBuilder var content: Content
 
     var body: some View {
-        Text(text)
-            .font(.footnote.weight(.medium))
-            .foregroundStyle(.white)
+        HStack(spacing: 8) { content }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(foreground)
+            .lineLimit(1)
+            .fixedSize()                       // hosting view の横潰れ＝テキスト切れを防ぐ
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(.black.opacity(0.8), in: Capsule())
+            .padding(.vertical, 11)
+            .background(background, in: Capsule())
+            .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
+    }
+
+    // bg: ライト=ほぼ黒(20,20,24 @0.92) / ダーク=近白。fg はその反転。
+    private var background: Color {
+        scheme == .dark
+            ? Color(white: 0.96)
+            : Color(red: 20 / 255, green: 20 / 255, blue: 24 / 255).opacity(0.92)
+    }
+    private var foreground: Color {
+        scheme == .dark
+            ? Color(red: 20 / 255, green: 20 / 255, blue: 24 / 255)
+            : .white
     }
 }
 #else
@@ -177,6 +239,8 @@ final class FlashbackPresenter {
         onOpenSettings: @escaping () -> Void
     ) {}
     func dismissReport() {}
-    func showStatus(_ message: String) {}
+    func showProgress(_ message: String) {}
+    func showFailure(_ message: String, onRetry: @escaping () -> Void) {}
+    func hideToast() {}
 }
 #endif
