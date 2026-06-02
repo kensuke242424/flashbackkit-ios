@@ -8,7 +8,7 @@ import UIKit
 /// 物理的な振りが使えない据え置き端末でも確実に発火する手段。
 ///
 /// 操作性:
-/// - **長押し**（0.35 秒）で起動。押下中はマーク外周にプログレスリングが溜まる。
+/// - **長押し**（0.5 秒）で起動。押下中はマーク外周にプログレスリングが溜まる。
 ///   袖や手が軽く触れた程度では誤爆しない。
 /// - **ドラッグ**で位置を移動でき、離すと左右どちらか近い端へ吸着 / タックする。
 /// - 普段は半透明で控えめ、触れている間だけ濃く表示。
@@ -73,9 +73,9 @@ private final class FloatingButtonView: UIView {
     private static let edgeMargin: CGFloat = 16
     private static let peek: CGFloat = 22          // タック時に画面端へ残す幅
     private static let tuckThreshold: CGFloat = 24 // この距離以上端へ押し込むとタック
-    private static let pressDuration: CFTimeInterval = 0.35
-    private let idleAlpha: CGFloat = 0.5
-    private let tuckedAlpha: CGFloat = 0.82
+    private static let pressDuration: CFTimeInterval = 0.5   // 操作感優先で 0.35→0.5（誤爆しにくく）
+    private static let pressScale: CGFloat = 1.06            // 長押しゲージ満了時の微増スケール
+    private let idleAlpha: CGFloat = 0.5   // 待機時の opacity（タック中も同じ）
     private let activeAlpha: CGFloat = 1.0
 
     private static let action = FlashbackColor.actionUIColor
@@ -191,40 +191,39 @@ private final class FloatingButtonView: UIView {
         wedgeLayer.fillColor = wedgeColor.cgColor
     }
 
-    /// タック状態によって変わる待機時アルファ。
-    private var restingAlpha: CGFloat { isTucked ? tuckedAlpha : idleAlpha }
-
-    // MARK: - 長押しプログレスリング
+    // MARK: - 長押しプログレス（ゲージ＋opacity＋微増スケール）
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         // タック中のタッチは引き出し用。プログレスは出さない。
         guard !isTucked else { return }
-        // 長押し中は opacity の減衰を無効化: 触れた瞬間にフル不透明（フェード無し）。
-        layer.removeAnimation(forKey: "opacity")
-        alpha = activeAlpha
-        beginPressProgress()
+        beginPressRamp()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
-        endPressProgress()
-        setActive(false)
+        clearPress(restoreActive: false)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesCancelled(touches, with: event)
-        endPressProgress()
-        setActive(false)
+        clearPress(restoreActive: false)
     }
 
-    private func beginPressProgress() {
+    /// 押下開始: ゲージ充填と同期して opacity（待機→不透明）と微増スケール（→`pressScale`）を
+    /// `pressDuration` かけてランプさせる。3 つが同時に満了＝発火タイミングで頂点になる。
+    private func beginPressRamp() {
         progressLayer.isHidden = false
-        // 低モーション設定では即時に満ちた状態（アニメ無し）。
+        layer.removeAnimation(forKey: "opacity")
+
         if UIAccessibility.isReduceMotionEnabled {
+            // 低モーション: アニメせず即時に満ちた状態・フル不透明。
             progressLayer.strokeEnd = 1
+            alpha = activeAlpha
             return
         }
+
+        // ゲージ（外周リング）を pressDuration で線形充填。
         progressLayer.strokeEnd = 1
         let fill = CABasicAnimation(keyPath: "strokeEnd")
         fill.fromValue = 0
@@ -232,12 +231,31 @@ private final class FloatingButtonView: UIView {
         fill.duration = Self.pressDuration
         fill.timingFunction = CAMediaTimingFunction(name: .linear)
         progressLayer.add(fill, forKey: "press")
+
+        // opacity と微増スケールをゲージに同期（線形・満了で頂点）。
+        UIView.animate(withDuration: Self.pressDuration, delay: 0,
+                       options: [.curveLinear, .allowUserInteraction, .beginFromCurrentState]) {
+            self.alpha = self.activeAlpha
+            self.transform = CGAffineTransform(scaleX: Self.pressScale, y: Self.pressScale)
+        }
     }
 
-    private func endPressProgress() {
+    /// 発火時: ゲージを消す。opacity/スケールは満了済みのまま `popScale` が引き継ぐ。
+    private func endPressGauge() {
         progressLayer.removeAnimation(forKey: "press")
         progressLayer.isHidden = true
         progressLayer.strokeEnd = 0
+    }
+
+    /// 押下中断（早離し / 取消 / ドラッグ転化）: ゲージを消し、opacity とスケールを素早く戻す。
+    /// - Parameter restoreActive: ドラッグ転化時は active（不透明）へ、それ以外は待機 alpha へ。
+    private func clearPress(restoreActive: Bool) {
+        endPressGauge()
+        UIView.animate(withDuration: 0.18, delay: 0,
+                       options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]) {
+            self.alpha = restoreActive ? self.activeAlpha : self.idleAlpha
+            self.transform = .identity
+        }
     }
 
     /// 指定の隅へ初期配置する。
@@ -265,14 +283,12 @@ private final class FloatingButtonView: UIView {
                 if let parent = superview { unTuck(in: parent) }
                 return
             }
-            setActive(true)
-            endPressProgress()                 // 0.35s 到達＝発火。リングは満ちて消す。
+            endPressGauge()                    // 満了＝発火。ゲージは満ちて消す（opacity/scale は維持）。
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            popScale()
+            popScale()                         // ランプの微増スケールから発火ポップへ繋ぐ。
             onTrigger?()
         case .ended, .cancelled, .failed:
-            endPressProgress()
-            setActive(false)
+            break                              // alpha/scale の後始末は touchesEnded/Cancelled が担う。
         default:
             break
         }
@@ -288,8 +304,8 @@ private final class FloatingButtonView: UIView {
         guard let parent = superview else { return }
         switch recognizer.state {
         case .began:
-            setActive(true)
-            endPressProgress()                 // ドラッグ＝長押しではない。プログレスを止める。
+            // ドラッグ＝長押しではない。ゲージ/スケールを畳み、不透明（active）に戻す。
+            clearPress(restoreActive: true)
             dragStartCenter = center
             lastRawCenter = center
         case .changed:
@@ -351,7 +367,7 @@ private final class FloatingButtonView: UIView {
         accessibilityHint = "タップで表示"
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         // 隠す側は跳ね返りが浅め（damping 高め）で「収まる」感じに。
-        spring(to: CGPoint(x: targetX, y: center.y), velocity: velocity, damping: 0.78, alpha: tuckedAlpha)
+        spring(to: CGPoint(x: targetX, y: center.y), velocity: velocity, damping: 0.78, alpha: idleAlpha)
     }
 
     /// タック状態から端のマージン位置へ引き出す。
@@ -436,7 +452,7 @@ private final class FloatingButtonView: UIView {
 
     private func setActive(_ active: Bool) {
         UIView.animate(withDuration: 0.15) {
-            self.alpha = active ? self.activeAlpha : self.restingAlpha
+            self.alpha = active ? self.activeAlpha : self.idleAlpha
         }
     }
 
@@ -462,7 +478,7 @@ extension FloatingButtonView {
     func previewConfigure(tucked: Bool, pressProgress: CGFloat?) {
         isTucked = tucked
         applyAppearance()
-        alpha = tucked ? tuckedAlpha : activeAlpha
+        alpha = tucked ? idleAlpha : activeAlpha
         if let pressProgress {
             progressLayer.isHidden = false
             progressLayer.strokeEnd = pressProgress
