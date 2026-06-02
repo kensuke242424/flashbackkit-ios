@@ -3,8 +3,9 @@ import SwiftUI
 
 /// Time Slice ロゴのくさび（扇形）Shape。
 ///
-/// 「時の時計」＋「直前 N 秒を切り取る」を表す、12 時から時計回りに開くパイ片。
-/// 既定は viewBox 64 の仕様どおり 12 時（上）から時計回り 66°。
+/// 「時の時計」＋「直前 N 秒を切り取る」を表す、12 時から**反時計回り（左斜め上）**に開くパイ片。
+/// 正本（design_handoff `_tsWedge`）の仕様どおり、扇は `cd ∈ [−66°, 0°]`＝真上から
+/// 反時計回りに 66°（10 時方向の左上）を満たす。巻き戻し（時間を遡る）方向を表す。
 ///
 /// 角度は **時計座標**（0° = 12 時、時計回りに増加）で受ける。SwiftUI の
 /// `addArc(clockwise:)` は y 下向き座標で意味が反転して紛らわしいため、
@@ -12,7 +13,7 @@ import SwiftUI
 struct TimeSliceWedge: Shape {
     /// くさびの開始角（12 時基準・時計回り）。既定 0°（真上）。
     var start: Angle = .degrees(0)
-    /// 開く角度。既定 66°。
+    /// 開く角度（真上から反時計回りに開く）。既定 66°。
     var sweep: Angle = .degrees(66)
 
     func path(in rect: CGRect) -> Path {
@@ -23,7 +24,8 @@ struct TimeSliceWedge: Shape {
 
         let steps = 48
         for i in 0...steps {
-            let clock = start.radians + sweep.radians * Double(i) / Double(steps)
+            // 真上から反時計回りに開く（cd を負方向へ）→ 左斜め上の扇。
+            let clock = start.radians - sweep.radians * Double(i) / Double(steps)
             // 時計座標 → 画面座標: 0° で真上 (0, -r)、時計回りに増加。
             let x = center.x + radius * sin(clock)
             let y = center.y - radius * cos(clock)

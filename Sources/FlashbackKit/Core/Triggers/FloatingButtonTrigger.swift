@@ -153,12 +153,12 @@ private final class FloatingButtonView: UIView {
         ringLayer.path = UIBezierPath(arcCenter: center, radius: radius,
                                       startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
 
-        // くさび: 12 時から時計回り 66°（時計座標で点サンプリング＝向きの曖昧さ排除）。
+        // くさび: 12 時から反時計回り 66°（左斜め上・巻き戻し方向）。点サンプリングで向きを確定。
         let wedge = UIBezierPath()
         wedge.move(to: center)
         let steps = 48
         for i in 0...steps {
-            let clock = (66 * Double(i) / Double(steps)) * .pi / 180
+            let clock = -(66 * Double(i) / Double(steps)) * .pi / 180
             wedge.addLine(to: CGPoint(x: center.x + radius * CGFloat(sin(clock)),
                                       y: center.y - radius * CGFloat(cos(clock))))
         }
@@ -169,12 +169,12 @@ private final class FloatingButtonView: UIView {
         hubLayer.path = UIBezierPath(arcCenter: center, radius: hubRadius,
                                      startAngle: 0, endAngle: 2 * .pi, clockwise: true).cgPath
 
-        // プログレスリング: ボタン外周のやや内側を 12 時から時計回りに。
+        // プログレスリング: ボタン外周のやや内側を 12 時から**反時計回り**に充填（時間を巻き戻す意味）。
         let progressRadius = bounds.width / 2 - 2
         progressLayer.lineWidth = 3
         progressLayer.path = UIBezierPath(arcCenter: center, radius: progressRadius,
-                                          startAngle: -.pi / 2, endAngle: -.pi / 2 + 2 * .pi,
-                                          clockwise: true).cgPath
+                                          startAngle: -.pi / 2, endAngle: -.pi / 2 - 2 * .pi,
+                                          clockwise: false).cgPath
     }
 
     /// 状態（録画中 / 休止 / タック）に応じて背景色・くさび色を反映する。
@@ -200,17 +200,22 @@ private final class FloatingButtonView: UIView {
         super.touchesBegan(touches, with: event)
         // タック中のタッチは引き出し用。プログレスは出さない。
         guard !isTucked else { return }
+        // 長押し中は opacity の減衰を無効化: 触れた瞬間にフル不透明（フェード無し）。
+        layer.removeAnimation(forKey: "opacity")
+        alpha = activeAlpha
         beginPressProgress()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
         endPressProgress()
+        setActive(false)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesCancelled(touches, with: event)
         endPressProgress()
+        setActive(false)
     }
 
     private func beginPressProgress() {
