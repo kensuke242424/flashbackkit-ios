@@ -9,6 +9,12 @@ final class FlashbackController {
     private let recorder = ScreenRecorder()
     private let presenter = FlashbackPresenter()
     private var detectors: [TriggerDetecting] = []
+    /// 設定画面のストア（表示トグル / 保持秒数 / 権限）。start() で生成し提示時に渡す。
+    private var settingsStore: FlashbackSettingsStore?
+    #if canImport(UIKit)
+    /// 動的に追加 / 撤去するため FAB トリガへの参照を保持する。
+    private var floatingButtonTrigger: FloatingButtonTrigger?
+    #endif
     /// 成果物 `FlashbackReport` をホストへ手渡すコールバック（唯一の拡張点）。
     private var onReport: (@MainActor (FlashbackReport) -> Void)?
     /// 1 回の提示につき onReport を一度だけ発火させるためのフラグ
@@ -28,34 +34,82 @@ final class FlashbackController {
         recorder.startBuffering(seconds: configuration.bufferSeconds)
         presenter.install()
 
-        // 有効な各トリガに対応する detector を生成し、どれが発火しても handleTrigger() に集約。
+        settingsStore = FlashbackSettingsStore(
+            floatingButtonVisible: configuration.triggers.contains(.floatingButton),
+            retentionSeconds: Int(configuration.bufferSeconds),
+            isRecordingAvailable: { [weak self] in self?.recorder.isAvailable ?? false },
+            onFloatingButtonVisibleChanged: { [weak self] in self?.setFloatingButton($0) },
+            onRetentionChanged: { [weak self] in self?.setRetention($0) }
+        )
+
+        // シェイクは即時に配線。FAB は動的 add/remove のため別管理。
         var detectors: [TriggerDetecting] = []
         if configuration.triggers.contains(.shake) {
-            detectors.append(ShakeTrigger())
-        }
-        #if canImport(UIKit)
-        if let host = presenter.triggerHost, configuration.triggers.contains(.floatingButton) {
-            let fab = FloatingButtonTrigger(host: host, corner: configuration.floatingButtonCorner)
-            // 進行中トーストは長押し開始時点で早出しする（発火直後はモーダルで一瞬になり見えないため）。
-            // 未発火で中断（早離し / ドラッグ）したら消す。
-            fab.onPressStart = { [weak self] in self?.presenter.showProgress("記憶を辿っています…") }
-            fab.onPressCancel = { [weak self] in self?.presenter.hideToast() }
-            detectors.append(fab)
-        }
-        #endif
-        for detector in detectors {
-            detector.onTrigger = { [weak self] in self?.handleTrigger() }
-            detector.start()
+            let shake = ShakeTrigger()
+            shake.onTrigger = { [weak self] in self?.handleTrigger() }
+            shake.start()
+            detectors.append(shake)
         }
         self.detectors = detectors
+
+        #if canImport(UIKit)
+        if configuration.triggers.contains(.floatingButton) {
+            installFloatingButton()
+        }
+        #endif
     }
 
     func stop() {
         detectors.forEach { $0.stop() }
         detectors.removeAll()
+        #if canImport(UIKit)
+        floatingButtonTrigger = nil
+        #endif
+        settingsStore = nil
         recorder.stopBuffering()
         presenter.uninstall()
     }
+
+    // MARK: - 設定の適用
+
+    /// フローティングボタンの表示/非表示を切り替える（設定トグル）。
+    private func setFloatingButton(_ visible: Bool) {
+        #if canImport(UIKit)
+        if visible { installFloatingButton() } else { removeFloatingButton() }
+        #endif
+    }
+
+    /// 保持秒数を反映する（設定の選択）。バッファを張り直して即時に適用する。
+    private func setRetention(_ seconds: Int) {
+        configuration.bufferSeconds = TimeInterval(seconds)
+        recorder.stopBuffering()
+        recorder.startBuffering(seconds: configuration.bufferSeconds)
+    }
+
+    #if canImport(UIKit)
+    /// FAB トリガを生成・配線・設置する（トースト早出し含む）。
+    private func installFloatingButton() {
+        guard floatingButtonTrigger == nil, let host = presenter.triggerHost else { return }
+        let fab = FloatingButtonTrigger(host: host, corner: configuration.floatingButtonCorner)
+        fab.onTrigger = { [weak self] in self?.handleTrigger() }
+        // 進行中トーストは長押し開始時点で早出し（発火直後はモーダルで一瞬になり見えないため）。
+        // 未発火で中断（早離し / ドラッグ）したら消す。
+        fab.onPressStart = { [weak self] in self?.presenter.showProgress("記憶を辿っています…") }
+        fab.onPressCancel = { [weak self] in self?.presenter.hideToast() }
+        fab.start()
+        floatingButtonTrigger = fab
+        detectors.append(fab)
+    }
+
+    /// FAB トリガを撤去する。
+    private func removeFloatingButton() {
+        floatingButtonTrigger?.stop()
+        if let fab = floatingButtonTrigger {
+            detectors.removeAll { $0 === fab }
+        }
+        floatingButtonTrigger = nil
+    }
+    #endif
 
     #if DEBUG
     /// DEBUG 専用: 任意のクリップでレポート UI を直接提示する（トリム UX 確認用）。
@@ -74,6 +128,12 @@ final class FlashbackController {
         presenter.showFailure("記憶の書き出しに失敗しました") { [weak self] in
             self?.presenter.hideToast()
         }
+    }
+
+    /// DEBUG 専用: 設定画面を単体で提示する（見た目確認用）。start() 後に呼ぶ。
+    func debugPresentSettings() {
+        guard let settingsStore else { return }
+        presenter.debugPresentSettings(store: settingsStore)
     }
     #endif
 
@@ -105,23 +165,18 @@ final class FlashbackController {
         }
     }
 
-    /// レポート UI を提示する。共有 / 設定 の 2 アクションを配線する。
+    /// レポート UI を提示する。共有アクションと設定ストア（歯車 / 録画オン）を渡す。
     /// おやすみ（クリップ無し）状態では成果物を確定しない（onReport を発火しない）。
     private func present(rawClip: URL?) {
+        guard let settingsStore else { return }
         hasCommitted = false
         presenter.presentReport(
             clipURL: rawClip,
             onShare: { [weak self] title, range in
                 await self?.handleShare(rawClip: rawClip, title: title, range: range)
             },
-            onOpenSettings: { [weak self] in self?.openSettings() }
+            settings: settingsStore
         )
-    }
-
-    /// 設定を開く（歯車 / おやすみ状態の「録画をオンにする」）。
-    /// TODO: Settings 画面（次タスク）を push する。現状はプレースホルダ（ログのみ）。
-    private func openSettings() {
-        FlashbackLog.report.info("設定を開く（Settings 画面は次タスクで実装予定）")
     }
 
     /// 共有: 選択範囲を切り出し（メタデータ焼き込み）→ commit → 共有シート用の URL を返す。

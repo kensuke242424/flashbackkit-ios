@@ -1,7 +1,7 @@
 import Foundation
 
 public struct FlashbackConfiguration: Sendable {
-    /// リングバッファに保持する直前秒数。
+    /// リングバッファに保持する直前秒数。既定 20（設定画面の選択肢 10/20/30/60 と整合）。
     public var bufferSeconds: TimeInterval
 
     /// 有効フラグ。Release ビルドでは原則 false 運用を想定。
@@ -17,7 +17,7 @@ public struct FlashbackConfiguration: Sendable {
     public var floatingButtonCorner: FloatingButtonCorner
 
     public init(
-        bufferSeconds: TimeInterval = 30,
+        bufferSeconds: TimeInterval = 20,
         isEnabled: Bool = true,
         triggers: FlashbackTrigger = .default,
         floatingButtonCorner: FloatingButtonCorner = .bottomTrailing

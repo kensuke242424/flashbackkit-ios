@@ -24,14 +24,15 @@ struct ReportView: View {
     let onShare: (String, ClosedRange<Double>?) async -> URL?
     /// キャンセル（✕）。
     let onCancel: () -> Void
-    /// 設定を開く（歯車 / おやすみ状態の「録画をオンにする」）。常時利用可能。
-    let onOpenSettings: () -> Void
+    /// 設定画面のストア（歯車 / おやすみ状態の「録画をオンにする」から push）。
+    @ObservedObject var settings: FlashbackSettingsStore
 
     @State private var title = ""
     /// 選択範囲（秒）。`0...0` は未確定で、トリマーが尺確定後に全体へ広げる。
     @State private var selection: ClosedRange<Double> = 0...0
     @State private var shareItem: ShareItem?
     @State private var isWorking = false
+    @State private var showingSettings = false
 
     private var hasClip: Bool { clipURL != nil }
 
@@ -52,10 +53,14 @@ struct ReportView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(FlashbackColor.background)
+            .navigationTitle("レポート")           // 子（設定）の戻るボタン文言。中央は principal で上書き。
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .overlay { workingOverlay }
             .sheet(item: $shareItem) { ShareSheet(items: [$0.url]) }
+            .navigationDestination(isPresented: $showingSettings) {
+                SettingsView(store: settings)
+            }
         }
         .tint(FlashbackColor.action)   // ✕ / 共有 / 歯車 / コントロールをオレンジに。
     }
@@ -81,7 +86,7 @@ struct ReportView: View {
                     .accessibilityLabel("共有")
                     .disabled(isWorking)
             }
-            Button(action: onOpenSettings) { Image(systemName: "gearshape") }
+            Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                 .accessibilityLabel("設定")
                 .disabled(isWorking)
         }
@@ -141,7 +146,7 @@ struct ReportView: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             // 録画をオンにする（橙・設定へ誘導）。
-            Button(action: onOpenSettings) {
+            Button { showingSettings = true } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "record.circle")
                     Text("録画をオンにする")

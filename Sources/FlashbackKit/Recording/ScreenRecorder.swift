@@ -19,6 +19,10 @@ final class ScreenRecorder {
     private var ring: SegmentRingWriter?
     private var isCapturing = false
 
+    /// 画面録画が利用可能か（Simulator / 通話中 / 別アプリ録画中などは false）。
+    /// 事前照会できる権限 API は無いため、設定画面の権限表示はこの可用性を用いる。
+    var isAvailable: Bool { recorder.isAvailable }
+
     func startBuffering(seconds: TimeInterval) {
         guard !isCapturing else { return }                 // 冪等
         SegmentRingWriter.purgeTempFiles()                 // 前回の残骸を掃除
@@ -274,6 +278,7 @@ final class SegmentRingWriter: @unchecked Sendable {
 }
 #else
 final class ScreenRecorder {
+    var isAvailable: Bool { false }
     func startBuffering(seconds: TimeInterval) {}
     func stopBuffering() {}
     func exportBufferedClip() async throws -> URL { throw FlashbackError.notImplemented }

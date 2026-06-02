@@ -40,5 +40,11 @@ public extension Flashback {
             FlashbackController.shared.debugShowProgressToast()
         }
     }
+
+    /// DEBUG 専用: 設定画面を即時表示する（見た目確認用）。
+    @MainActor
+    static func debugPresentSettings() {
+        FlashbackController.shared.debugPresentSettings()
+    }
 }
 #endif

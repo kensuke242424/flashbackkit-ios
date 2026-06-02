@@ -53,6 +53,14 @@ struct ContentView: View {
                 Label("おやすみ状態を開く", systemImage: "moon")
             }
             .buttonStyle(.bordered)
+
+            // 設定画面を確認するための入口。
+            Button {
+                Flashback.debugPresentSettings()
+            } label: {
+                Label("設定を開く", systemImage: "gearshape")
+            }
+            .buttonStyle(.bordered)
             #endif
         }
         .onAppear {
@@ -86,6 +94,12 @@ struct ContentView: View {
             if let toastKind = ProcessInfo.processInfo.environment["FLASHBACK_TOAST_DEMO"] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     Flashback.debugShowToast(toastKind)
+                }
+            }
+            // FLASHBACK_SETTINGS_DEMO で起動直後に設定画面を自動提示する。
+            if ProcessInfo.processInfo.environment["FLASHBACK_SETTINGS_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentSettings()
                 }
             }
             #endif

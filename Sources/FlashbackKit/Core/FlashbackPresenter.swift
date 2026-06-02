@@ -55,11 +55,11 @@ final class FlashbackPresenter {
     /// - Parameters:
     ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければ「おやすみ」案内。
     ///   - onShare: 共有アクション。切り出し→commit し、共有シート用の最終クリップ URL を返す。
-    ///   - onOpenSettings: 設定を開く（歯車 / おやすみ状態の「録画をオンにする」）。
+    ///   - settings: 設定画面のストア（歯車 / 「録画をオンにする」から push）。
     func presentReport(
         clipURL: URL?,
         onShare: @escaping (String, ClosedRange<Double>?) async -> URL?,
-        onOpenSettings: @escaping () -> Void
+        settings: FlashbackSettingsStore
     ) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
 
@@ -68,7 +68,7 @@ final class FlashbackPresenter {
             device: .current(),                           // @MainActor 採取（本メソッドは @MainActor）
             onShare: onShare,
             onCancel: { [weak self] in self?.dismissReport() },
-            onOpenSettings: onOpenSettings
+            settings: settings
         )
         let host = UIHostingController(rootView: report)
         host.modalPresentationStyle = .fullScreen
@@ -96,6 +96,18 @@ final class FlashbackPresenter {
     func hideToast() {
         model.toast = nil
     }
+
+    #if DEBUG
+    /// DEBUG 専用: 設定画面を単体（自前の NavigationStack）で提示する（見た目確認用）。
+    func debugPresentSettings(store: FlashbackSettingsStore) {
+        guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
+        let view = NavigationStack { SettingsView(store: store) }
+        let host = UIHostingController(rootView: view)
+        host.modalPresentationStyle = .fullScreen
+        reportHost = host
+        root.present(host, animated: true)
+    }
+    #endif
 
     // MARK: - 設置
 
@@ -238,7 +250,7 @@ final class FlashbackPresenter {
     func presentReport(
         clipURL: URL?,
         onShare: @escaping (String, ClosedRange<Double>?) async -> URL?,
-        onOpenSettings: @escaping () -> Void
+        settings: FlashbackSettingsStore
     ) {}
     func dismissReport() {}
     func showProgress(_ message: String) {}
