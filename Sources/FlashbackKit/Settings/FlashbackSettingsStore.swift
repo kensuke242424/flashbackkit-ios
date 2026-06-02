@@ -16,8 +16,13 @@ final class FlashbackSettingsStore: ObservableObject {
     @Published var retentionSeconds: Int {
         didSet { onRetentionChanged(retentionSeconds) }
     }
-    /// 画面録画が利用可能か（権限表示用・呼ぶたびに最新を返す）。
+    /// 画面録画が利用可能か（= 端末/環境が録画できるか・RPScreenRecorder.isAvailable）。
+    /// 「録画オン/オフ」とは別物（拒否しても true）。CTA の出し分け等の判定に使う。
     let isRecordingAvailable: () -> Bool
+
+    /// 実際に録画（バッファ取り込み）が走っているか（= startCapture 成功後だけ true）。
+    /// 設定画面の「録画中/停止中」表示用。呼ぶたびに最新を返す。
+    let isRecording: () -> Bool
 
     /// 「録画をオンにする」での再試行が成立した直後か。`true` の間、ReportView の空状態は
     /// おやすみ（録画オフ）ではなく「録画オン直後（justEnabled）」を表示する。
@@ -35,6 +40,7 @@ final class FlashbackSettingsStore: ObservableObject {
         floatingButtonVisible: Bool,
         retentionSeconds: Int,
         isRecordingAvailable: @escaping () -> Bool,
+        isRecording: @escaping () -> Bool,
         onFloatingButtonVisibleChanged: @escaping (Bool) -> Void,
         onRetentionChanged: @escaping (Int) -> Void,
         onRetryRecording: @escaping () -> Void
@@ -42,6 +48,7 @@ final class FlashbackSettingsStore: ObservableObject {
         self.floatingButtonVisible = floatingButtonVisible
         self.retentionSeconds = retentionSeconds
         self.isRecordingAvailable = isRecordingAvailable
+        self.isRecording = isRecording
         self.onFloatingButtonVisibleChanged = onFloatingButtonVisibleChanged
         self.onRetentionChanged = onRetentionChanged
         self.onRetryRecording = onRetryRecording

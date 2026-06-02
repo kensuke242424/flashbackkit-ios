@@ -38,6 +38,7 @@ final class FlashbackController {
             floatingButtonVisible: configuration.triggers.contains(.floatingButton),
             retentionSeconds: Int(configuration.bufferSeconds),
             isRecordingAvailable: { [weak self] in self?.recorder.isAvailable ?? false },
+            isRecording: { [weak self] in self?.recorder.isRecording ?? false },
             onFloatingButtonVisibleChanged: { [weak self] in self?.setFloatingButton($0) },
             onRetentionChanged: { [weak self] in self?.setRetention($0) },
             onRetryRecording: { [weak self] in self?.retryRecording() }
