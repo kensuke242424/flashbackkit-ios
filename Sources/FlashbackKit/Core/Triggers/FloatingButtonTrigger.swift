@@ -207,17 +207,14 @@ private final class FloatingButtonView: UIView {
                                           clockwise: false).cgPath
     }
 
-    /// 状態（録画中 / 休止 / タック）に応じて背景色・くさび色を反映する。
+    /// 背景色・くさび色を**録画状態だけ**で決める（タックは色に影響しない）。
+    /// 色ルール「録画中＝オレンジ／停止中＝グレー」をユーザーに分かりやすく統一する。
+    /// タック中の見分けは形状（ハーフピル）と alpha が担う。
     private func applyAppearance() {
-        backgroundColor = (recordingEnabled && !isTucked) ? Self.action : Self.slate
-        let wedgeColor: UIColor
-        if isTucked {
-            wedgeColor = Self.action                       // タック中: オレンジくさび。
-        } else if recordingEnabled {
-            wedgeColor = UIColor.white.withAlphaComponent(0.5)   // 録画中。
-        } else {
-            wedgeColor = UIColor.white.withAlphaComponent(0.6)   // 休止。
-        }
+        backgroundColor = recordingEnabled ? Self.action : Self.slate
+        let wedgeColor = recordingEnabled
+            ? UIColor.white.withAlphaComponent(0.5)   // 録画中
+            : UIColor.white.withAlphaComponent(0.6)   // 停止中（休止）
         wedgeLayer.fillColor = wedgeColor.cgColor
     }
 
@@ -416,7 +413,7 @@ private final class FloatingButtonView: UIView {
             : -half + Self.peek
         isTucked = true
         tuckedAtMaxX = toMaxEdge
-        applyAppearance()                       // グレー＋オレンジくさびへ。
+        applyAppearance()                       // 色は録画状態のまま（タックは形状/alpha のみ）。
         accessibilityHint = "タップで表示"
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         // 隠す側は跳ね返りが浅め（damping 高め）で「収まる」感じに。
