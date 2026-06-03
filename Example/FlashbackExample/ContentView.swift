@@ -7,48 +7,24 @@ import FlashbackKit
 /// 既定トリガ（シェイク / フローティングボタン）を仕込む。
 /// いずれかのトリガ → ReportView → タイトル入力 → 共有 でループが回る。
 ///
-/// 画面上部に「常時アニメーションするオブジェクト」と「起動からの経過時間」を出す。
-/// 録画クリップを後で再生したとき、オブジェクトが動き・数字が進んでいれば
-/// 「トリガー直前の N 秒」がちゃんと録れている証拠になる。
+/// 録画の成否を確認しやすいよう、画面に「動き」を用意している:
+/// - ホームタブ … 常時アニメーションするオブジェクト＋経過時間
+/// - タブ切替・各タブのスクロール … 画面遷移が録画クリップに明確に残る
 struct ContentView: View {
     @State private var startDate = Date()
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                Text("FlashbackKit Example")
-                    .font(.title2.bold())
-
-                // 録画動作確認用の常時アニメーション（横移動＋回転＋色変化）。
-                // 録画クリップのどの瞬間を見ても「動いている」ことが分かるようにする。
-                MotionDemo(start: startDate)
-                    .frame(height: 84)
-                    .padding(.horizontal, 24)
-
-                // 起動からの経過時間（mm:ss.SSS）。20fps で更新。動きの時刻づけ用に併置。
-                TimelineView(.periodic(from: startDate, by: 0.05)) { context in
-                    Text(Self.elapsedString(from: startDate, to: context.date))
-                        .font(.system(size: 34, weight: .bold, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(.tint)
-                }
-
-                Text("上のオブジェクトが動き・数字が進んでいれば、録画クリップに\n直前 N 秒の動きが残っている証拠になる")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                Text("端末を振る（手持ち）／ フローティングボタンを長押し（据え置き）でレポート UI を開く")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                #if DEBUG
-                debugButtons
-                #endif
-            }
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
+        TabView {
+            HomeTab(startDate: startDate)
+                .tabItem { Label("ホーム", systemImage: "house") }
+            DummyListTab()
+                .tabItem { Label("リスト", systemImage: "list.bullet") }
+            DummyGalleryTab()
+                .tabItem { Label("ギャラリー", systemImage: "square.grid.2x2") }
+            #if DEBUG
+            DebugTab()
+                .tabItem { Label("デバッグ", systemImage: "ladybug") }
+            #endif
         }
         .onAppear {
             // triggers 未指定なので既定（シェイク + フローティングボタン）。
@@ -63,68 +39,14 @@ struct ContentView: View {
                 }
             )
             #if DEBUG
-            presentDemosFromEnvironment()
+            Self.presentDemosFromEnvironment()
             #endif
         }
     }
 
     #if DEBUG
-    /// デバッグ用の各状態への入口（Simulator / 見た目確認）。
-    @ViewBuilder
-    private var debugButtons: some View {
-        // Simulator では ReplayKit 実録画が動かず本物のクリップが出ないため、
-        // 合成サンプル動画でトリミング UX を確認するためのデバッグ入口。
-        Button {
-            Flashback.debugPresentSampleReport()
-        } label: {
-            Label("サンプル動画でトリマーを開く", systemImage: "scissors")
-        }
-        .buttonStyle(.borderedProminent)
-        .padding(.top, 8)
-
-        // クリップ無し（録画オフ）時の「おやすみ」案内 UI を確認するための入口。
-        Button {
-            Flashback.debugPresentEmptyReport()
-        } label: {
-            Label("おやすみ状態を開く", systemImage: "moon")
-        }
-        .buttonStyle(.bordered)
-
-        // 「録画オン直後」状態（オレンジマーク＋録画中）を確認するための入口。
-        Button {
-            Flashback.debugPresentRecordingJustEnabled()
-        } label: {
-            Label("録画オン直後を開く", systemImage: "record.circle")
-        }
-        .buttonStyle(.bordered)
-
-        // 「録画不可（この端末では利用できません）」状態を確認するための入口。
-        Button {
-            Flashback.debugPresentReportUnavailable()
-        } label: {
-            Label("録画不可状態を開く", systemImage: "iphone.slash")
-        }
-        .buttonStyle(.bordered)
-
-        // 画面収録 許可プライミングのシートを確認するための入口。
-        Button {
-            Flashback.debugPresentPriming()
-        } label: {
-            Label("許可プライミングを開く", systemImage: "hand.raised")
-        }
-        .buttonStyle(.bordered)
-
-        // 設定画面を確認するための入口。
-        Button {
-            Flashback.debugPresentSettings()
-        } label: {
-            Label("設定を開く", systemImage: "gearshape")
-        }
-        .buttonStyle(.bordered)
-    }
-
     /// 環境変数で指定された状態を起動直後に自動提示する（Simulator / 自動検証用）。
-    private func presentDemosFromEnvironment() {
+    static func presentDemosFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
         func after(_ delay: TimeInterval, _ action: @escaping () -> Void) {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
@@ -138,6 +60,47 @@ struct ContentView: View {
         if env["FLASHBACK_SETTINGS_DEMO"] != nil { after(0.5) { Flashback.debugPresentSettings() } }
     }
     #endif
+}
+
+// MARK: - ホームタブ
+
+/// 起動状況・常時アニメーション・デバッグ入口を載せたホーム。
+private struct HomeTab: View {
+    let startDate: Date
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                Text("FlashbackKit Example")
+                    .font(.title2.bold())
+
+                // 録画動作確認用の常時アニメーション（横移動＋回転＋色変化）。
+                MotionDemo(start: startDate)
+                    .frame(height: 84)
+                    .padding(.horizontal, 24)
+
+                // 起動からの経過時間（mm:ss.SSS）。20fps で更新。動きの時刻づけ用。
+                TimelineView(.periodic(from: startDate, by: 0.05)) { context in
+                    Text(Self.elapsedString(from: startDate, to: context.date))
+                        .font(.system(size: 34, weight: .bold, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(.tint)
+                }
+
+                Text("オブジェクトの動き／タブ切替・スクロールが録画クリップに残れば、\n直前 N 秒がちゃんと録れている証拠になる")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+
+                Text("端末を振る（手持ち）／ フローティングボタンを長押し（据え置き）でレポート UI を開く")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
+        }
+    }
 
     /// 経過時間を mm:ss.SSS に整形する。
     private static func elapsedString(from start: Date, to now: Date) -> String {
@@ -148,6 +111,127 @@ struct ContentView: View {
         return String(format: "%02d:%02d.%03d", minutes, seconds, millis)
     }
 }
+
+// MARK: - ダミーUIタブ（録画に画面遷移を残すため）
+
+/// スクロールするダミー一覧。タブ切替＋スクロールで録画に動きが残る。
+private struct DummyListTab: View {
+    private let symbols = ["star.fill", "bell.fill", "bolt.fill", "leaf.fill", "flame.fill",
+                           "drop.fill", "moon.fill", "heart.fill", "cloud.fill", "sun.max.fill"]
+    var body: some View {
+        NavigationStack {
+            List(0..<30, id: \.self) { i in
+                HStack(spacing: 12) {
+                    Image(systemName: symbols[i % symbols.count])
+                        .font(.title3)
+                        .foregroundStyle(Color(hue: Double(i % 10) / 10, saturation: 0.7, brightness: 0.9))
+                        .frame(width: 30)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("アイテム \(i + 1)").font(.body)
+                        Text("ダミー行 — スクロールで動きを確認").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .navigationTitle("リスト")
+        }
+    }
+}
+
+/// 色付きカードのグリッド。スクロールで動きが出る。
+private struct DummyGalleryTab: View {
+    private let columns = [GridItem(.adaptive(minimum: 100), spacing: 12)]
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(0..<24, id: \.self) { i in
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color(hue: Double(i) / 24, saturation: 0.65, brightness: 0.92))
+                            .frame(height: 100)
+                            .overlay(
+                                Text("\(i + 1)")
+                                    .font(.title.bold())
+                                    .foregroundStyle(.white.opacity(0.9))
+                            )
+                    }
+                }
+                .padding(16)
+            }
+            .navigationTitle("ギャラリー")
+        }
+    }
+}
+
+// MARK: - デバッグタブ（各状態の即プレビュー・DEBUG 限定）
+
+#if DEBUG
+/// 各 ReportView 状態 / 設定 / プライミングを即プレビューする開発用入口を集約したタブ。
+/// ホームをすっきり保つため、これらはここへ寄せる（env 変数でも起動直後に提示可能）。
+private struct DebugTab: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 12) {
+                    // Simulator では ReplayKit 実録画が動かないため、合成サンプル動画で
+                    // トリミング UX を確認する入口。
+                    Button {
+                        Flashback.debugPresentSampleReport()
+                    } label: {
+                        Label("サンプル動画でトリマーを開く", systemImage: "scissors")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        Flashback.debugPresentEmptyReport()
+                    } label: {
+                        Label("おやすみ状態を開く", systemImage: "moon")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        Flashback.debugPresentRecordingJustEnabled()
+                    } label: {
+                        Label("録画オン直後を開く", systemImage: "record.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        Flashback.debugPresentReportUnavailable()
+                    } label: {
+                        Label("録画不可状態を開く", systemImage: "iphone.slash")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        Flashback.debugPresentPriming()
+                    } label: {
+                        Label("許可プライミングを開く", systemImage: "hand.raised")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        Flashback.debugPresentSettings()
+                    } label: {
+                        Label("設定を開く", systemImage: "gearshape")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(16)
+            }
+            .navigationTitle("デバッグ")
+        }
+    }
+}
+#endif
+
+// MARK: - 常時アニメーション
 
 /// 録画動作確認用の常時アニメーション（Example 専用）。
 ///
