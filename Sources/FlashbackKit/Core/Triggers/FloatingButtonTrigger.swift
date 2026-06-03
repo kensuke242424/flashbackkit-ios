@@ -46,7 +46,7 @@ final class FloatingButtonTrigger: TriggerDetecting {
         button.onPressStart = { [weak self] in self?.onPressStart?() }
         button.onPressCancel = { [weak self] in self?.onPressCancel?() }
         hostView.addSubview(button)
-        button.place(in: hostView, corner: corner)
+        button.placeAvoidingTabBar(in: hostView, corner: corner)
         self.button = button
     }
 
@@ -109,6 +109,11 @@ private final class FloatingButtonView: UIView {
     private var lastRawCenter: CGPoint = .zero
     private var isTucked = false
     private var tuckedAtMaxX = false
+    /// ホストのタブバーに被らないよう下端へ加算するインセット。**配置時に一度だけ**判定して保持する
+    /// （動的追従はしない）。タブバーが無ければ 0。以後のクランプ（ドラッグ下限）にも一貫して使う。
+    private var extraBottomInset: CGFloat = 0
+    /// ユーザーが一度でも触れたか。表示直後のタブバー再判定（再配置）を中断する条件に使う。
+    private var hasUserInteracted = false
 
     init(recordingEnabled: Bool = true) {
         self.recordingEnabled = recordingEnabled
@@ -222,6 +227,7 @@ private final class FloatingButtonView: UIView {
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
+        hasUserInteracted = true               // 以後はタブバー再判定で勝手に動かさない。
         didFire = false
         // タック中のタッチは引き出し用。プログレスは出さない。
         guard !isTucked else { return }
@@ -306,19 +312,41 @@ private final class FloatingButtonView: UIView {
     }
 
     /// 指定の隅へ初期配置する。
+    /// 配置するこの瞬間にホストのタブバー有無を一度だけ判定し、あれば下端を上げる。
     func place(in container: UIView, corner: FloatingButtonCorner) {
+        extraBottomInset = Self.hostTabBarInset(in: container)   // 表示時の一回判定（動的追従なし）
         let bounds = container.bounds
         let inset = container.safeAreaInsets
         let half = Self.diameter / 2
         let minX = inset.left + Self.edgeMargin + half
         let maxX = bounds.width - inset.right - Self.edgeMargin - half
         let minY = inset.top + Self.edgeMargin + half
-        let maxY = bounds.height - inset.bottom - Self.edgeMargin - half
+        let maxY = bounds.height - inset.bottom - extraBottomInset - Self.edgeMargin - half
         switch corner {
         case .topLeading:     center = CGPoint(x: minX, y: minY)
         case .topTrailing:    center = CGPoint(x: maxX, y: minY)
         case .bottomLeading:  center = CGPoint(x: minX, y: maxY)
         case .bottomTrailing: center = CGPoint(x: maxX, y: maxY)
+        }
+    }
+
+    /// 配置し、タブバーがまだ現れていなければ表示直後だけ短時間リトライ判定する。
+    /// 起動直後（onAppear で start）はホストの `UITabBar` が階層に未追加なことがあるため、
+    /// 表示の瞬間にタブバーが出てきたら一度だけ上げ直す。ユーザーが触れたら中断（勝手に動かさない）。
+    func placeAvoidingTabBar(in container: UIView, corner: FloatingButtonCorner) {
+        place(in: container, corner: corner)               // 即時表示（この時点でタブバーがあれば既に上がる）
+        scheduleTabBarRecheck(in: container, corner: corner, retriesLeft: 8)
+    }
+
+    private func scheduleTabBarRecheck(in container: UIView, corner: FloatingButtonCorner, retriesLeft: Int) {
+        guard retriesLeft > 0, extraBottomInset == 0, !hasUserInteracted else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self, weak container] in
+            guard let self, let container, self.superview != nil,
+                  !self.hasUserInteracted, self.extraBottomInset == 0 else { return }
+            self.place(in: container, corner: corner)       // 再判定（place 内でタブバー有無を算出）
+            if self.extraBottomInset == 0 {                 // まだ見つからなければ続けてリトライ
+                self.scheduleTabBarRecheck(in: container, corner: corner, retriesLeft: retriesLeft - 1)
+            }
         }
     }
 
@@ -461,7 +489,7 @@ private final class FloatingButtonView: UIView {
         let minX = inset.left + Self.edgeMargin + half
         let maxX = parent.bounds.width - inset.right - Self.edgeMargin - half
         let minY = inset.top + Self.edgeMargin + half
-        let maxY = parent.bounds.height - inset.bottom - Self.edgeMargin - half
+        let maxY = parent.bounds.height - inset.bottom - extraBottomInset - Self.edgeMargin - half
         return CGPoint(x: min(max(point.x, minX), maxX), y: min(max(point.y, minY), maxY))
     }
 
@@ -469,7 +497,7 @@ private final class FloatingButtonView: UIView {
     private func clampY(_ y: CGFloat, in parent: UIView) -> CGFloat {
         let half = Self.diameter / 2
         let minY = parent.safeAreaInsets.top + Self.edgeMargin + half
-        let maxY = parent.bounds.height - parent.safeAreaInsets.bottom - Self.edgeMargin - half
+        let maxY = parent.bounds.height - parent.safeAreaInsets.bottom - extraBottomInset - Self.edgeMargin - half
         return min(max(y, minY), maxY)
     }
 
@@ -479,6 +507,38 @@ private final class FloatingButtonView: UIView {
         return maxEdge
             ? parent.bounds.width - parent.safeAreaInsets.right - Self.edgeMargin - half
             : parent.safeAreaInsets.left + Self.edgeMargin + half
+    }
+
+    // MARK: - ホストのタブバー判定（表示時の一回きり）
+
+    /// ホストアプリに**今表示中のタブバー**があれば、被り回避に下端へ足すインセットを返す（無ければ 0）。
+    /// SDK overlay は別ウィンドウのため safeArea にタブバーが含まれない。タブバー高さには下 safe area が
+    /// 含まれるので、その分は二重計上しない。標準 `UITabBar` / SwiftUI `TabView` が対象（自作バーは非対象）。
+    private static func hostTabBarInset(in container: UIView) -> CGFloat {
+        let overlay = container.window
+        let scene = overlay?.windowScene
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        guard let scene else { return 0 }
+        // overlay（.alert+1）以外の通常レベル window からホストのタブバーを探す。
+        for window in scene.windows where window !== overlay && window.windowLevel == .normal {
+            guard let bar = findVisibleTabBar(in: window) else { continue }
+            let frame = bar.convert(bar.bounds, to: window)
+            // 画面下端に着いている可視のバーだけを対象に（push で外へ逃げたバー等を除外）。
+            guard frame.height > 0, frame.maxY >= window.bounds.height - 0.5 else { continue }
+            return max(0, frame.height - container.safeAreaInsets.bottom)
+        }
+        return 0
+    }
+
+    /// view 階層から可視の `UITabBar`（window 上・非 hidden・不透明）を再帰探索する。
+    private static func findVisibleTabBar(in view: UIView) -> UITabBar? {
+        if let bar = view as? UITabBar, bar.window != nil, !bar.isHidden, bar.alpha > 0.01, bar.bounds.height > 0 {
+            return bar
+        }
+        for sub in view.subviews {
+            if let found = findVisibleTabBar(in: sub) { return found }
+        }
+        return nil
     }
 
     /// ドラッグ中のクランプ。x は端の壁を作らず、タック位置（画面端の外）まで指追従させる。
