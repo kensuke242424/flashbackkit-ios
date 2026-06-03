@@ -22,6 +22,8 @@ struct VideoTrimmerView: View {
     @State private var thumbnails: [UIImage] = []
     @State private var playhead: Double = 0
     @State private var isPlaying = false
+    /// 再生ヘッドをドラッグ中か。periodic observer の playhead 上書きを止め、指追従にする。
+    @State private var isScrubbing = false
     @State private var timeObserver: Any?
     /// 動画の表示アスペクト比（幅/高さ）。尺確定時に実トラックから求め、プレビュー枠を
     /// これに合わせることで黒帯（レターボックス）を出さない。確定までは縦動画想定の暫定値。
@@ -78,7 +80,9 @@ struct VideoTrimmerView: View {
                 minimumDuration: minimumDuration,
                 playhead: playhead,
                 selection: $selection,
-                onScrub: { seconds in seek(to: seconds) }
+                onScrub: { seconds in seek(to: seconds) },
+                onScrubBegan: { beginScrub() },
+                onScrubEnded: { isScrubbing = false }
             )
             .frame(height: 56)
         }
@@ -164,6 +168,16 @@ struct VideoTrimmerView: View {
                     toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// 再生ヘッドのドラッグ開始（冪等）。再生中なら一時停止し、observer の上書きを止める。
+    private func beginScrub() {
+        guard !isScrubbing else { return }
+        isScrubbing = true
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+        }
+    }
+
     private func addObserver() {
         guard timeObserver == nil else { return }
         let interval = CMTime(seconds: 0.03, preferredTimescale: 600)
@@ -171,6 +185,8 @@ struct VideoTrimmerView: View {
             // periodic observer は @Sendable closure。MainActor 隔離の State へは Task で戻す。
             let seconds = CMTimeGetSeconds(time)
             Task { @MainActor in
+                // スクラブ中は指追従を優先（observer は playhead を上書きしない）。
+                guard !isScrubbing else { return }
                 playhead = seconds
                 // 選択範囲の終端でループ。
                 if isPlaying, seconds >= selection.upperBound {
@@ -219,8 +235,13 @@ private struct FilmstripTrimmer: View {
     let playhead: Double
     @Binding var selection: ClosedRange<Double>
     let onScrub: (Double) -> Void
+    /// 再生ヘッドのドラッグ開始（冪等）／終了。スクラブ中の一時停止・observer 抑制を親に伝える。
+    var onScrubBegan: () -> Void = {}
+    var onScrubEnded: () -> Void = {}
 
     private let handleWidth: CGFloat = 14
+    /// ハンドルの透明ヒット域（見た目より広く取り、スクラブ面より確実に掴めるようにする）。
+    private let handleHitWidth: CGFloat = 34
 
     var body: some View {
         GeometryReader { geo in
@@ -237,6 +258,11 @@ private struct FilmstripTrimmer: View {
                 dim(width: startX, height: height)
                 dim(width: width - endX, height: height).offset(x: endX)
 
+                // 再生ヘッドの見た目（オレンジのクリップバーより**背面**・非対話。細い縦バー＋上部ノブ）。
+                if duration > 0 {
+                    playheadVisual(at: handleWidth + xOffset(for: playhead, usable: usable), height: height)
+                }
+
                 // 選択枠: 背景色の外輪（2pt）＋アクション色の枠（2.5pt）。
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(FlashbackColor.background, lineWidth: 6)
@@ -247,17 +273,15 @@ private struct FilmstripTrimmer: View {
                     .frame(width: max(endX - startX, 0), height: height)
                     .offset(x: startX)
 
+                // 再生ヘッドのグラブ（ヘッド上の小さめ領域）。**ハンドルより後ろ（下の z 順）**に置き、
+                // クリップバー（トリム）を主役・最優先に。再生ヘッドはハンドルに重ならない所で次点で掴める。
+                if duration > 0 {
+                    playheadGrab(at: handleWidth + xOffset(for: playhead, usable: usable),
+                                 height: height, usable: usable)
+                }
+
                 handle(at: startX, height: height, usable: usable, isStart: true)
                 handle(at: endX, height: height, usable: usable, isStart: false)
-
-                // 再生ヘッド（label 色の細い縦バー）。
-                if duration > 0 {
-                    Rectangle()
-                        .fill(FlashbackColor.label)
-                        .frame(width: 2, height: height)
-                        .offset(x: handleWidth + xOffset(for: playhead, usable: usable))
-                        .allowsHitTesting(false)
-                }
             }
             .frame(width: width, height: height)
             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -293,6 +317,7 @@ private struct FilmstripTrimmer: View {
     }
 
     /// 指の絶対位置（"strip" 座標）で追従するハンドル。translation 累積のドリフトを避ける。
+    /// 見た目は `handleWidth`、ヒット域は広め（`handleHitWidth`）にしてスクラブ面より確実に掴める。
     private func handle(at x: CGFloat, height: CGFloat, usable: CGFloat, isStart: Bool) -> some View {
         RoundedRectangle(cornerRadius: 4)
             .fill(FlashbackColor.action)
@@ -300,7 +325,9 @@ private struct FilmstripTrimmer: View {
             .overlay(
                 Capsule().fill(FlashbackColor.onAction).frame(width: 3, height: 18)
             )
-            .offset(x: x - handleWidth / 2)
+            .frame(width: handleHitWidth, height: height)   // 透明な広いヒット域（見た目は中央の handleWidth）
+            .contentShape(Rectangle())
+            .offset(x: x - handleHitWidth / 2)
             .accessibilityLabel(isStart ? "開始位置" : "終了位置")
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .named("strip"))
@@ -319,6 +346,53 @@ private struct FilmstripTrimmer: View {
                         }
                     }
             )
+    }
+
+    /// 再生ヘッドの見た目（細い縦バーのみ）。非対話（グラブは別レイヤ）。
+    private func playheadVisual(at x: CGFloat, height: CGFloat) -> some View {
+        Rectangle()
+            .fill(FlashbackColor.label)
+            .frame(width: 2, height: height)
+            .offset(x: x)
+            .allowsHitTesting(false)
+    }
+
+    /// 再生ヘッドのグラブ（ヘッド上の小さめ領域）。位置は選択範囲内へクランプして seek。
+    /// ハンドル（広いヒット域・上の z 順）に重なる箇所ではトリムが優先される＝クリップバーが主役。
+    /// グラブ幅はハンドルのヒット域より狭くして、重なり時はハンドルが確実に勝つようにする。
+    private func playheadGrab(at x: CGFloat, height: CGFloat, usable: CGFloat) -> some View {
+        let grabWidth: CGFloat = 26
+        return Color.clear
+            .frame(width: grabWidth, height: height)
+            .contentShape(Rectangle())
+            .offset(x: x - grabWidth / 2 + 1)
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .named("strip"))
+                    .onChanged { value in
+                        onScrubBegan()
+                        let seconds = secondsForX(value.location.x - handleWidth, usable: usable)
+                        onScrub(clampToSelection(seconds))
+                    }
+                    .onEnded { _ in onScrubEnded() }
+            )
+            .accessibilityLabel("再生位置")
+            .accessibilityValue(timeLabel(playhead))
+            .accessibilityAdjustableAction { direction in
+                let target = direction == .increment ? playhead + 1 : playhead - 1
+                onScrubBegan()
+                onScrub(clampToSelection(target))
+                onScrubEnded()
+            }
+    }
+
+    /// 選択範囲内へクランプ（トリム外へは出さない）。
+    private func clampToSelection(_ seconds: Double) -> Double {
+        min(max(seconds, selection.lowerBound), selection.upperBound)
+    }
+
+    private func timeLabel(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded())
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 
     private func xOffset(for seconds: Double, usable: CGFloat) -> CGFloat {
