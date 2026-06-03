@@ -36,11 +36,12 @@ struct TimeSliceWedge: Shape {
     }
 }
 
-/// Time Slice マーク（リング + くさび + ハブ）。
+/// Time Slice マーク（リング + くさび + 針 + ハブ）。
 ///
 /// 色と不透明度を差し替えるだけで FAB の4状態（録画中 / 長押し中 / 端タック / 休止）と
 /// ロゴ用途を表現できるよう、要素ごとに色を受ける。寸法は viewBox 64 を基準に
-/// 与えられた frame へ等倍スケールする（リング半径 20・線幅 3.2・ハブ半径 2.6）。
+/// 与えられた frame へ等倍スケールする（リング半径 20・線幅 3.2・ハブ半径 2.6・針 12時方向 r=18）。
+/// 針（12時を指す時計の針）はブランド更新で追加。リング/ハブと同色。
 ///
 /// 呼び出し側で `.frame(width:height:)` を指定して使う（例: FAB マーク 36pt）。
 struct TimeSliceMark: View {
@@ -57,6 +58,7 @@ struct TimeSliceMark: View {
             let ringDiameter = 40 * k             // 半径 20
             let strokeWidth = 3.2 * k
             let hubDiameter = 5.2 * k             // 半径 2.6
+            let handLength = 18 * k               // 中心→12時の針（r=18・リング内側 2 手前）
 
             ZStack {
                 Circle()
@@ -66,6 +68,12 @@ struct TimeSliceMark: View {
                 TimeSliceWedge(start: wedgeStart, sweep: wedgeSweep)
                     .fill(wedgeColor)
                     .frame(width: ringDiameter, height: ringDiameter)
+
+                // 針（12時方向）。リング/ハブと同色・丸キャップ。中心から真上へ伸ばす。
+                Capsule()
+                    .fill(ringColor)
+                    .frame(width: strokeWidth, height: handLength)
+                    .offset(y: -handLength / 2)
 
                 Circle()
                     .fill(hubColor)

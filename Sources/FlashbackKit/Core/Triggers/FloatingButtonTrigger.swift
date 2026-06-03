@@ -101,6 +101,7 @@ private final class FloatingButtonView: UIView {
 
     private let ringLayer = CAShapeLayer()
     private let wedgeLayer = CAShapeLayer()
+    private let handLayer = CAShapeLayer()
     private let hubLayer = CAShapeLayer()
     private let progressLayer = CAShapeLayer()
 
@@ -149,15 +150,19 @@ private final class FloatingButtonView: UIView {
         ringLayer.fillColor = UIColor.clear.cgColor
         ringLayer.strokeColor = UIColor.white.cgColor
         ringLayer.lineCap = .round
+        handLayer.fillColor = UIColor.clear.cgColor
+        handLayer.strokeColor = UIColor.white.cgColor       // 針はリング/ハブと同色（FAB は白）
+        handLayer.lineCap = .round
         hubLayer.fillColor = UIColor.white.cgColor
         progressLayer.fillColor = UIColor.clear.cgColor
         progressLayer.strokeColor = UIColor.white.withAlphaComponent(0.9).cgColor
         progressLayer.lineCap = .round
         progressLayer.strokeEnd = 0
         progressLayer.isHidden = true
-        // 順序: リング → くさび → ハブ → プログレス。
+        // 順序: リング → くさび → 針 → ハブ → プログレス。
         layer.addSublayer(ringLayer)
         layer.addSublayer(wedgeLayer)
+        layer.addSublayer(handLayer)
         layer.addSublayer(hubLayer)
         layer.addSublayer(progressLayer)
     }
@@ -182,6 +187,13 @@ private final class FloatingButtonView: UIView {
         }
         wedge.close()
         wedgeLayer.path = wedge.cgPath
+
+        // 針: 中心→12時方向（r=18・リング内側 2 手前）。丸キャップ。
+        let hand = UIBezierPath()
+        hand.move(to: center)
+        hand.addLine(to: CGPoint(x: center.x, y: center.y - 18 * k))
+        handLayer.lineWidth = 3.2 * k
+        handLayer.path = hand.cgPath
 
         let hubRadius = 2.6 * k
         hubLayer.path = UIBezierPath(arcCenter: center, radius: hubRadius,

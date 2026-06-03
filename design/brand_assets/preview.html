@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FlashbackKit — Brand Assets Preview</title>
+<style>
+  :root { --sf: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Hiragino Sans", system-ui, sans-serif; --mono: ui-monospace, "SF Mono", Menlo, monospace; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font-family: var(--sf); color: #1c1d24; background: #f0eee9; padding: 40px; }
+  h1 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: #6a6b74; margin: 0 0 28px; }
+  h2 { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #6a6b74; margin: 28px 0 12px; }
+  .row { display: flex; gap: 18px; flex-wrap: wrap; }
+  .tile { border-radius: 16px; padding: 28px; display: flex; align-items: center; justify-content: center; gap: 26px; border: 1px solid #e6e4df; }
+  .tile.light { background: #ffffff; }
+  .tile.dark { background: #000000; }
+  .tile img { display: block; }
+  .cap { font-size: 11px; font-family: var(--mono); color: #9a9ba2; margin-top: 8px; text-align: center; }
+  .col { display: flex; flex-direction: column; align-items: center; }
+  .grid { display: flex; gap: 16px; align-items: flex-end; flex-wrap: wrap; }
+  .swatches { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+  .sw { display: flex; flex-direction: column; gap: 5px; width: 120px; }
+  .chip { height: 38px; border-radius: 8px; box-shadow: inset 0 0 0 1px rgba(128,128,128,0.18); }
+  .swname { font-size: 11px; font-weight: 600; }
+  .swhex { font-size: 10.5px; font-family: var(--mono); color: #9a9ba2; }
+</style>
+</head>
+<body>
+  <h1>FlashbackKit — Brand Assets</h1>
+  <p class="sub">確定方向「Quiet」のロゴ／アプリ名セット。透過 PNG（複数サイズ）＋ 編集可能 SVG・ライト/ダーク。</p>
+
+  <h2>ロックアップ（マーク＋アプリ名）</h2>
+  <div class="row">
+    <div class="col">
+      <div class="tile light"><img src="lockup/flashbackkit-lockup-on-light-1x.png" width="460" alt="lockup light" /></div>
+      <div class="cap">on-light · -2x.png / -1x.png / .svg</div>
+    </div>
+    <div class="col">
+      <div class="tile dark"><img src="lockup/flashbackkit-lockup-on-dark-1x.png" width="460" alt="lockup dark" /></div>
+      <div class="cap">on-dark · -2x.png / -1x.png / .svg</div>
+    </div>
+  </div>
+
+  <h2>マーク単体（Time Slice · 針あり / 12時）</h2>
+  <div class="row">
+    <div class="col">
+      <div class="tile light">
+        <div class="grid">
+          <img src="mark/flashbackkit-mark-on-light-120.png" width="96" alt="mark 96" />
+          <img src="mark/flashbackkit-mark-on-light-80.png" width="56" alt="mark 56" />
+          <img src="mark/flashbackkit-mark-on-light-80.png" width="32" alt="mark 32" />
+        </div>
+      </div>
+      <div class="cap">on-light · 1024/512/256/120/80.png + .svg</div>
+    </div>
+    <div class="col">
+      <div class="tile dark">
+        <div class="grid">
+          <img src="mark/flashbackkit-mark-on-dark-120.png" width="96" alt="mark dark 96" />
+          <img src="mark/flashbackkit-mark-on-dark-80.png" width="56" alt="mark dark 56" />
+          <img src="mark/flashbackkit-mark-on-dark-80.png" width="32" alt="mark dark 32" />
+        </div>
+      </div>
+      <div class="cap">on-dark · 1024/512/256/120/80.png + .svg</div>
+    </div>
+  </div>
+
+  <h2>色トークン（Quiet）</h2>
+  <div class="swatches">
+    <div class="sw"><div class="chip" style="background:#000000"></div><div class="swname">label / リング</div><div class="swhex">#000000 · L</div></div>
+    <div class="sw"><div class="chip" style="background:#D9821C"></div><div class="swname">Action-Orange / 扇・Kit</div><div class="swhex">#D9821C · L</div></div>
+    <div class="sw"><div class="chip" style="background:#E8A23E"></div><div class="swname">Action-Orange</div><div class="swhex">#E8A23E · D</div></div>
+    <div class="sw"><div class="chip" style="background:#FFFFFF"></div><div class="swname">label / リング</div><div class="swhex">#FFFFFF · D</div></div>
+  </div>
+</body>
+</html>
