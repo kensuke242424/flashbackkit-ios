@@ -59,6 +59,10 @@ final class FlashbackController {
             // 録画オフに確定したら「録画オン直後（justEnabled）」も解除（停止後に
             // ReportView が「録画をオンにしました」のまま残らないように）。
             if !active { store.recordingJustEnabled = false }
+            // FAB の色を録画状態へ反映（録画中＝オレンジ／停止中＝グレー）。
+            #if canImport(UIKit)
+            self?.floatingButtonTrigger?.setRecordingEnabled(active)
+            #endif
         }
 
         // シェイクは即時に配線。FAB は動的 add/remove のため別管理。
@@ -133,7 +137,9 @@ final class FlashbackController {
     /// FAB トリガを生成・配線・設置する（トースト早出し含む）。
     private func installFloatingButton() {
         guard floatingButtonTrigger == nil, let host = presenter.triggerHost else { return }
-        let fab = FloatingButtonTrigger(host: host, corner: configuration.floatingButtonCorner)
+        // 初期色は実録画状態に合わせる（起動時録画 既定オフなら最初はグレー）。
+        let fab = FloatingButtonTrigger(host: host, corner: configuration.floatingButtonCorner,
+                                        recordingEnabled: recorder.isRecording)
         fab.onTrigger = { [weak self] in self?.handleTrigger() }
         // 進行中トーストは長押し開始時点で早出し（発火直後はモーダルで一瞬になり見えないため）。
         // ただし**録画OFF時は出さない**（書き出すものが無く、おやすみ案内へ直行するため・README 準拠）。
