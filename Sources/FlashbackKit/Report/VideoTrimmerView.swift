@@ -44,17 +44,24 @@ struct VideoTrimmerView: View {
                         if duration == 0 {
                             ProgressView().tint(.white)
                         } else if !isPlaying {
-                            // 中央の再生アフォーダンス（ポスター表示）。
-                            Button(action: togglePlay) {
-                                Image(systemName: "play.fill")
-                                    .font(.title3)
-                                    .foregroundStyle(.white)
-                                    .padding(16)
-                                    .background(.black.opacity(0.35), in: Circle())
-                            }
-                            .accessibilityLabel("再生")
+                            // 一時停止中のポスター表示。タップ判定は映像エリア全体で受けるので非対話。
+                            Image(systemName: "play.fill")
+                                .font(.title3)
+                                .foregroundStyle(.white)
+                                .padding(16)
+                                .background(.black.opacity(0.35), in: Circle())
+                                .allowsHitTesting(false)
                         }
                     }
+                    // 映像エリア全体をタップで再生/一時停止トグル（再生中タップで停止できる）。
+                    .contentShape(RoundedRectangle(cornerRadius: 12))
+                    .onTapGesture { if duration > 0 { togglePlay() } }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityLabel("プレビュー")
+                    .accessibilityValue(isPlaying ? "再生中" : "一時停止中")
+                    .accessibilityHint("タップで再生 / 一時停止")
+                    .accessibilityAction { if duration > 0 { togglePlay() } }
                 Spacer(minLength: 0)
             }
 
