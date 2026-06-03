@@ -13,6 +13,8 @@ struct VideoTrimmerView: View {
     let url: URL
     /// 選択範囲（秒）。`lowerBound == upperBound` の初期値を渡すと、尺確定後に全体へ広げる。
     @Binding var selection: ClosedRange<Double>
+    /// プレビュー枠の最大高さ。ハーフモーダルでは小さく、展開時は大きく渡す。
+    var previewMaxHeight: CGFloat = 280
 
     /// これ以上は詰められない最小選択長（秒）。
     private let minimumDuration: Double = 1.0
@@ -35,7 +37,7 @@ struct VideoTrimmerView: View {
                 Spacer(minLength: 0)
                 PlayerLayerView(player: player)
                     .aspectRatio(videoAspect, contentMode: .fit)
-                    .frame(maxHeight: 280)
+                    .frame(maxHeight: previewMaxHeight)
                     .background(.black, in: RoundedRectangle(cornerRadius: 12))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay {

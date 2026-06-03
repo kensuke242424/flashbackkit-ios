@@ -18,6 +18,10 @@ final class FlashbackPresenter {
     private let model = OverlayModel()
     private var window: UIWindow?
     private weak var reportHost: UIViewController?
+    /// レポートシートの detent 状態（medium=未展開 / large=展開）。delegate と SwiftUI で共有。
+    private var reportDetent: SheetDetentModel?
+    /// シートの detent 変更を監視するデリゲート（自前で強参照して生かす）。
+    private var reportSheetDelegate: ReportSheetDelegate?
 
     /// overlay window を前面シーンに設置する。トリガ用の UI（ボタン / ジェスチャ）は
     /// `triggerHost` を介して各 detector が載せる。
@@ -47,11 +51,18 @@ final class FlashbackPresenter {
     func uninstall() {
         reportHost?.dismiss(animated: false)
         reportHost = nil
+        reportSheetDelegate = nil
+        reportDetent = nil
         window?.isHidden = true
         window = nil
     }
 
-    /// レポート入力 UI をモーダル（フルスクリーン）で表示する。
+    /// レポート入力 UI をハーフモーダル（`.medium` 起点・上スワイプで `.large`）で表示する。
+    ///
+    /// 初回は `.medium` で「動画プレビュー＋クリップバー（トリマー）」までを見せ、共有(↑)は
+    /// ナビバーに常駐するので **medium のまま共有まで進める**。上スワイプ（`.large`）で
+    /// タイトル・環境情報まで開く。動画プレビューは `.medium` で小さく / `.large` で大きくし、
+    /// ハーフでクリップバーが畳まれないようにする。
     /// - Parameters:
     ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければ「おやすみ」案内。
     ///   - onShare: 共有アクション。切り出し→commit し、共有シート用の最終クリップ URL を返す。
@@ -63,23 +74,44 @@ final class FlashbackPresenter {
     ) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
 
+        let detent = SheetDetentModel()
         let report = ReportView(
             clipURL: clipURL,
             device: .current(),                           // @MainActor 採取（本メソッドは @MainActor）
             onShare: onShare,
             onCancel: { [weak self] in self?.dismissReport() },
-            settings: settings
+            onRequestExpand: { [weak self] in self?.expandReportSheet() },
+            settings: settings,
+            detent: detent
         )
         let host = UIHostingController(rootView: report)
-        host.modalPresentationStyle = .fullScreen
+        host.modalPresentationStyle = .pageSheet
+        if let sheet = host.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.selectedDetentIdentifier = .medium      // 初回はハーフ（クリップバーまで）。
+            sheet.prefersGrabberVisible = true            // 上スワイプで開けると示すグラバー。
+            let delegate = ReportSheetDelegate(model: detent)
+            sheet.delegate = delegate
+            reportSheetDelegate = delegate
+        }
+        reportDetent = detent
         reportHost = host
         root.present(host, animated: true)
+    }
+
+    /// レポートシートを `.large`（展開）へ広げる。設定 push などハーフでは窮屈な遷移の前に使う。
+    private func expandReportSheet() {
+        guard let sheet = reportHost?.sheetPresentationController else { return }
+        sheet.animateChanges { sheet.selectedDetentIdentifier = .large }
+        reportDetent?.isExpanded = true                   // delegate を待たず即反映（プレビュー拡大）。
     }
 
     /// レポート入力 UI を閉じる。
     func dismissReport() {
         reportHost?.dismiss(animated: true)
         reportHost = nil
+        reportSheetDelegate = nil
+        reportDetent = nil
     }
 
     /// 「2回シェイクで起動」ヒント（中央アラート風カード）を最前面へ提示する。
@@ -187,6 +219,26 @@ final class FlashbackPresenter {
 @MainActor
 private final class WeakVCBox {
     weak var vc: UIViewController?
+}
+
+/// レポートのハーフモーダルが `.large`（展開）まで開いているかを SwiftUI 側へ伝える。
+/// 動画プレビューの拡大などに使う。`ReportSheetDelegate` が detent 変化で更新する。
+@MainActor
+final class SheetDetentModel: ObservableObject {
+    /// `.large` まで展開済みか（false = `.medium` のハーフ）。
+    @Published var isExpanded: Bool = false
+}
+
+/// シートの選択 detent 変化を監視し、`SheetDetentModel` へ反映するデリゲート。
+/// UIKit が main で呼ぶため `@MainActor`。
+@MainActor
+private final class ReportSheetDelegate: NSObject, UISheetPresentationControllerDelegate {
+    private let model: SheetDetentModel
+    init(model: SheetDetentModel) { self.model = model }
+
+    func sheetPresentationControllerDidChangeSelectedDetentIdentifier(_ sheet: UISheetPresentationController) {
+        model.isExpanded = sheet.selectedDetentIdentifier == .large
+    }
 }
 
 /// 実体のある subview（ボタン等）以外のタッチをホストアプリへ通す `UIWindow`。

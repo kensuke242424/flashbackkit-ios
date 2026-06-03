@@ -29,8 +29,12 @@ struct ReportView: View {
     let onShare: (String, ClosedRange<Double>?) async -> URL?
     /// キャンセル（✕）。
     let onCancel: () -> Void
+    /// シートを `.large` へ展開する要求（ハーフでは窮屈な設定 push の前に呼ぶ）。
+    let onRequestExpand: () -> Void
     /// 設定画面のストア（歯車 / おやすみ状態の「録画をオンにする」から push）。
     @ObservedObject var settings: FlashbackSettingsStore
+    /// ハーフモーダルの展開状態（`.large` で動画プレビューを拡大する）。
+    @ObservedObject var detent: SheetDetentModel
 
     @State private var title = ""
     /// 選択範囲（秒）。`0...0` は未確定で、トリマーが尺確定後に全体へ広げる。
@@ -47,7 +51,13 @@ struct ReportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if let clipURL {
-                        VideoTrimmerView(url: clipURL, selection: $selection)
+                        // ハーフ（.medium）は動画を主役に大きく（クリップバーが隠れない上限 ~220）。
+                        // 展開（.large）はシート下部に余白が余りがちなので、動画をさらに大きくして埋める。
+                        VideoTrimmerView(
+                            url: clipURL,
+                            selection: $selection,
+                            previewMaxHeight: detent.isExpanded ? 360 : 220
+                        )
                         titleField
                     } else if settings.recordingJustEnabled {
                         justEnabledInvitation
@@ -60,6 +70,7 @@ struct ReportView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent.isExpanded)
             }
             .scrollDismissesKeyboard(.interactively)
             .background(FlashbackColor.background)
@@ -107,7 +118,10 @@ struct ReportView: View {
                     .accessibilityLabel("共有")
                     .disabled(isWorking)
             }
-            Button { showingSettings = true } label: { Image(systemName: "gearshape") }
+            Button {
+                onRequestExpand()        // 設定はハーフだと窮屈なので large へ広げてから push。
+                showingSettings = true
+            } label: { Image(systemName: "gearshape") }
                 .accessibilityLabel("設定")
                 .disabled(isWorking)
         }
