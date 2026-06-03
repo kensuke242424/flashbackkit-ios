@@ -99,9 +99,18 @@ final class FlashbackPresenter {
 
     #if DEBUG
     /// DEBUG 専用: 設定画面を単体（自前の NavigationStack）で提示する（見た目確認用）。
+    /// 本番は ReportView の歯車から push され「‹ レポート」で戻れるが、単体提示は親が無いため
+    /// 「閉じる」を足して手詰まりにならないようにする（本番の SettingsView には影響しない）。
     func debugPresentSettings(store: FlashbackSettingsStore) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
-        let view = NavigationStack { SettingsView(store: store) }
+        let view = NavigationStack {
+            SettingsView(store: store)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("閉じる") { [weak self] in self?.dismissReport() }
+                    }
+                }
+        }
         let host = UIHostingController(rootView: view)
         host.modalPresentationStyle = .fullScreen
         reportHost = host

@@ -22,15 +22,23 @@ final class ScreenRecorder {
     /// ring をロック越しに原子的に差し替えられるので、**ReplayKit を止めずに**保持秒数を
     /// 変更できる（古い stop→即 start の churn を避ける）。
     private let ringHolder = RingHolder()
+    /// startCapture を試行中か（許可ダイアログ応答前も含む）。idempotency / ring 寿命管理用の内部状態。
     private var isCapturing = false
+    /// 取り込みが**確定**したか（startCapture 成功＝許可後だけ true）。UI の「録画中/停止中」はこちら。
+    private var captureConfirmed = false
 
     /// 画面録画が利用可能か（Simulator / 通話中 / 別アプリ録画中などは false）。
     /// 事前照会できる権限 API は無いため、設定画面の権限表示はこの可用性を用いる。
     var isAvailable: Bool { recorder.isAvailable }
 
-    /// 実際に録画（バッファ取り込み）が走っているか。`isAvailable` は端末では権限拒否でも
-    /// true を返すため、「録画が実際にオンか」の真値はこちら。
-    var isRecording: Bool { isCapturing }
+    /// 実際に録画が走っている（許可確定済み）か。`isCapturing`（試行中）ではなく**確定**状態を返す。
+    /// 許可ダイアログ応答前は false（楽観的に true にしない）。UI の録画中表示・発火可否の真値。
+    var isRecording: Bool { captureConfirmed }
+
+    /// 録画の確定状態が変わるたびに `@MainActor` で呼ばれる永続フック（全 start 経路共通）。
+    /// 成功確定→true / 停止・失敗→false。設定画面の「録画中/停止中」を監視更新するのに使う。
+    /// （retry 一回限りの `onCaptureStarted` とは別。こちらは start() で一度だけ配線し常駐。）
+    var onRecordingStateChanged: ((Bool) -> Void)?
 
     /// `startCapture` の確定結果を通知するフック（録画オン直後の justEnabled 判定用）。
     /// `@MainActor` 上で呼ばれる。`true` = 取り込み開始成功、`false` = 失敗（権限拒否など）。
@@ -73,12 +81,16 @@ final class ScreenRecorder {
                 if let error {
                     FlashbackLog.lifecycle.error("startCapture 失敗: \(error.localizedDescription, privacy: .public)")
                     self.isCapturing = false
+                    self.captureConfirmed = false
                     self.ring?.teardown()
                     self.ring = nil
                     self.onCaptureStarted?(false)
+                    self.onRecordingStateChanged?(false)   // 確定: 録画オフ（拒否など）
                 } else {
                     FlashbackLog.lifecycle.info("startCapture 開始成功（録画オン）")
-                    self.onCaptureStarted?(true)           // 取り込み開始成功（録画オン）
+                    self.captureConfirmed = true           // ここで初めて「録画中」確定（許可後）
+                    self.onCaptureStarted?(true)           // retry 一回限り（justEnabled 用）
+                    self.onRecordingStateChanged?(true)    // 確定: 録画オン（UI 監視更新）
                 }
             }
         })
@@ -103,10 +115,15 @@ final class ScreenRecorder {
     func stopBuffering() {
         guard isCapturing else { return }                  // 冪等
         isCapturing = false
+        let wasConfirmed = captureConfirmed
+        captureConfirmed = false
         ringHolder.set(nil)                                // 在庫サンプルを以降ドロップ（破棄済み ring を触らせない）
-        recorder.stopCapture { _ in }
+        // completion は背景スレッドで呼ばれる。@Sendable 必須（無いと @MainActor 隔離を継承し
+        // 背景実行の瞬間に "Block was expected to execute on queue [main-thread]" で trap する）。
+        recorder.stopCapture { @Sendable _ in }
         ring?.teardown()
         ring = nil
+        if wasConfirmed { onRecordingStateChanged?(false) }  // 確定: 録画オフ
     }
 
     /// 現在のバッファを一時 .mp4 に書き出して URL を返す。
@@ -349,6 +366,7 @@ final class ScreenRecorder {
     var isAvailable: Bool { false }
     var isRecording: Bool { false }
     var onCaptureStarted: ((Bool) -> Void)?
+    var onRecordingStateChanged: ((Bool) -> Void)?
     func startBuffering(seconds: TimeInterval) {}
     func changeBufferSeconds(_ seconds: TimeInterval) {}
     func stopBuffering() {}

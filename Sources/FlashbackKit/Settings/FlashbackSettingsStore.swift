@@ -20,9 +20,10 @@ final class FlashbackSettingsStore: ObservableObject {
     /// 「録画オン/オフ」とは別物（拒否しても true）。CTA の出し分け等の判定に使う。
     let isRecordingAvailable: () -> Bool
 
-    /// 実際に録画（バッファ取り込み）が走っているか（= startCapture 成功後だけ true）。
-    /// 設定画面の「録画中/停止中」表示用。呼ぶたびに最新を返す。
-    let isRecording: () -> Bool
+    /// 実際に録画が走っている（許可確定済み）か。設定画面の「録画中/停止中」表示用。
+    /// Controller が `ScreenRecorder.onRecordingStateChanged` 経由で更新する（@Published＝UI 自動更新）。
+    /// 許可ダイアログ応答前は false（楽観的に true にしない）。
+    @Published var isRecordingActive: Bool
 
     /// 「録画をオンにする」での再試行が成立した直後か。`true` の間、ReportView の空状態は
     /// おやすみ（録画オフ）ではなく「録画オン直後（justEnabled）」を表示する。
@@ -56,27 +57,30 @@ final class FlashbackSettingsStore: ObservableObject {
     private let onFloatingButtonVisibleChanged: (Bool) -> Void
     private let onRetentionChanged: (Int) -> Void
     private let onRetryRecording: () -> Void
+    private let onStopRecording: () -> Void
     private let onPromptOnLaunchChanged: (Bool) -> Void
 
     init(
         floatingButtonVisible: Bool,
         retentionSeconds: Int,
         promptOnLaunch: Bool,
+        isRecordingActive: Bool,
         isRecordingAvailable: @escaping () -> Bool,
-        isRecording: @escaping () -> Bool,
         onFloatingButtonVisibleChanged: @escaping (Bool) -> Void,
         onRetentionChanged: @escaping (Int) -> Void,
         onRetryRecording: @escaping () -> Void,
+        onStopRecording: @escaping () -> Void,
         onPromptOnLaunchChanged: @escaping (Bool) -> Void
     ) {
         self.floatingButtonVisible = floatingButtonVisible
         self.retentionSeconds = retentionSeconds
         self.promptOnLaunch = promptOnLaunch            // init 代入では didSet は走らない（永続/副作用は起きない）
+        self.isRecordingActive = isRecordingActive
         self.isRecordingAvailable = isRecordingAvailable
-        self.isRecording = isRecording
         self.onFloatingButtonVisibleChanged = onFloatingButtonVisibleChanged
         self.onRetentionChanged = onRetentionChanged
         self.onRetryRecording = onRetryRecording
+        self.onStopRecording = onStopRecording
         self.onPromptOnLaunchChanged = onPromptOnLaunchChanged
     }
 
@@ -84,6 +88,11 @@ final class FlashbackSettingsStore: ObservableObject {
     /// iOS の仕様上、許可ダイアログはアプリ起動時に出る。再試行で再度出る場合もある（版依存）。
     func retryRecording() {
         onRetryRecording()
+    }
+
+    /// 録画を停止する（ユーザ操作）。再開は「録画を有効にする」/「録画をオンにする」から。
+    func stopRecording() {
+        onStopRecording()
     }
 }
 #endif
