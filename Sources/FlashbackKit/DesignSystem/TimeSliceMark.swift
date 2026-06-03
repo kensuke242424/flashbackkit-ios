@@ -95,6 +95,14 @@ extension TimeSliceMark {
                       hubColor: FlashbackColor.slate)
     }
 
+    /// プライミング（事前説明）のヒーローマーク。まだ録画オフなので Slate 中立。
+    /// くさびは控えめ（@0.45）で「これからオンにする」ニュアンス（正本 priming.jsx 準拠）。
+    static func primingNeutral() -> TimeSliceMark {
+        TimeSliceMark(ringColor: FlashbackColor.slate,
+                      wedgeColor: FlashbackColor.slate.opacity(0.45),
+                      hubColor: FlashbackColor.slate)
+    }
+
     /// 録画オン直後（録画中）のマーク。明るいサーフェス上でオレンジ一色。
     /// 色ルール「グレー→オレンジ＝録画中」を表す（ReportView の justEnabled 状態）。
     static func recordingOnSurface() -> TimeSliceMark {

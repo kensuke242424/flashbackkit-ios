@@ -29,29 +29,55 @@ final class FlashbackSettingsStore: ObservableObject {
     /// 提示のたびに Controller がリセットする（次回の空状態が誤って justEnabled にならないため）。
     @Published var recordingJustEnabled = false
 
+    /// アプリ起動時に画面収録の許可を確認する（起動直後に `startCapture`）か。設定トグルで切替。
+    /// 変更は UserDefaults へ永続化し、Controller 側で即時反映（ON で即バッファ開始）する。
+    @Published var promptOnLaunch: Bool {
+        didSet {
+            UserDefaults.standard.set(promptOnLaunch, forKey: Self.promptOnLaunchKey)
+            onPromptOnLaunchChanged(promptOnLaunch)
+        }
+    }
+
+    /// 画面収録のプライミング（事前説明）を既に一度見せたか（端末1回）。
+    /// `true` 以降は「録画をオンにする」でプライミングを挟まず直接 OS 確認（再試行）へ。
+    /// SDK 副作用を持たない単純フラグなので UserDefaults を直接読み書きする。
+    var hasPrimedScreenRecording: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.hasPrimedKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.hasPrimedKey) }
+    }
+
     /// 保持秒数の選択肢。
     static let retentionOptions = [10, 20, 30, 60]
+
+    /// UserDefaults キー（ホストと衝突しないよう接頭辞付き）。
+    static let promptOnLaunchKey = "FlashbackKit.promptOnLaunch"
+    static let hasPrimedKey = "FlashbackKit.hasPrimedScreenRecording"
 
     private let onFloatingButtonVisibleChanged: (Bool) -> Void
     private let onRetentionChanged: (Int) -> Void
     private let onRetryRecording: () -> Void
+    private let onPromptOnLaunchChanged: (Bool) -> Void
 
     init(
         floatingButtonVisible: Bool,
         retentionSeconds: Int,
+        promptOnLaunch: Bool,
         isRecordingAvailable: @escaping () -> Bool,
         isRecording: @escaping () -> Bool,
         onFloatingButtonVisibleChanged: @escaping (Bool) -> Void,
         onRetentionChanged: @escaping (Int) -> Void,
-        onRetryRecording: @escaping () -> Void
+        onRetryRecording: @escaping () -> Void,
+        onPromptOnLaunchChanged: @escaping (Bool) -> Void
     ) {
         self.floatingButtonVisible = floatingButtonVisible
         self.retentionSeconds = retentionSeconds
+        self.promptOnLaunch = promptOnLaunch            // init 代入では didSet は走らない（永続/副作用は起きない）
         self.isRecordingAvailable = isRecordingAvailable
         self.isRecording = isRecording
         self.onFloatingButtonVisibleChanged = onFloatingButtonVisibleChanged
         self.onRetentionChanged = onRetentionChanged
         self.onRetryRecording = onRetryRecording
+        self.onPromptOnLaunchChanged = onPromptOnLaunchChanged
     }
 
     /// 録画（`startCapture`）を再試行する。拒否後の後付け許可 / おやすみ状態の「録画をオンにする」用。

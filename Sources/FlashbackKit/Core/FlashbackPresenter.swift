@@ -107,6 +107,16 @@ final class FlashbackPresenter {
         reportHost = host
         root.present(host, animated: true)
     }
+
+    /// DEBUG 専用: 許可プライミングのシート（.medium）を単体で提示する（見た目確認用）。
+    func debugPresentPriming(onProceed: @escaping () -> Void, onLater: @escaping () -> Void) {
+        guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
+        let host = UIHostingController(rootView: PrimingDebugHost(onProceed: onProceed, onLater: onLater))
+        host.modalPresentationStyle = .overFullScreen
+        host.view.backgroundColor = .clear
+        reportHost = host
+        root.present(host, animated: false)
+    }
     #endif
 
     // MARK: - 設置
@@ -242,6 +252,24 @@ private struct ToastCapsule<Content: View>: View {
             .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
     }
 }
+
+#if DEBUG
+/// DEBUG 専用: 透明ホスト上に許可プライミングのシートを即提示する（見た目確認用）。
+private struct PrimingDebugHost: View {
+    let onProceed: () -> Void
+    let onLater: () -> Void
+    @State private var show = true
+
+    var body: some View {
+        Color.clear
+            .ignoresSafeArea()
+            .sheet(isPresented: $show) {
+                PermissionPrimingView(onProceed: onProceed, onLater: onLater)
+                    .presentationDetents([.medium])
+            }
+    }
+}
+#endif
 #else
 /// UIKit / SwiftUI が無い環境（macOS ホストビルド等）向けの no-op スタブ。
 final class FlashbackPresenter {

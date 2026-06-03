@@ -38,6 +38,7 @@ struct ReportView: View {
     @State private var shareItem: ShareItem?
     @State private var isWorking = false
     @State private var showingSettings = false
+    @State private var showingPriming = false
 
     private var hasClip: Bool { clipURL != nil }
 
@@ -67,6 +68,17 @@ struct ReportView: View {
             .toolbar { toolbar }
             .overlay { workingOverlay }
             .sheet(item: $shareItem) { ShareSheet(items: [$0.url]) }
+            .sheet(isPresented: $showingPriming) {
+                PermissionPrimingView(
+                    onProceed: {
+                        settings.hasPrimedScreenRecording = true   // 端末1回
+                        showingPriming = false
+                        settings.retryRecording()                   // → startCapture（OS 確認）→ 成功で justEnabled
+                    },
+                    onLater: { showingPriming = false }             // おやすみへ戻る（トースト無し）
+                )
+                .presentationDetents([.medium])
+            }
             .navigationDestination(isPresented: $showingSettings) {
                 SettingsView(store: settings)
             }
@@ -145,8 +157,8 @@ struct ReportView: View {
                 .foregroundStyle(FlashbackColor.secondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // 録画をオンにする（橙・録画を再試行＝拒否後の後付け許可を狙う）。
-            Button { settings.retryRecording() } label: {
+            // 録画をオンにする（橙）。初回はプライミングを挟み、以降は直接 OS 確認（再試行）へ。
+            Button(action: enableRecordingTapped) {
                 HStack(spacing: 8) {
                     Image(systemName: "record.circle")
                     Text("録画をオンにする")
@@ -253,6 +265,15 @@ struct ReportView: View {
     }
 
     // MARK: - アクション
+
+    /// 「録画をオンにする」: 端末で初回はプライミングを提示、2回目以降は直接 OS 確認（再試行）。
+    private func enableRecordingTapped() {
+        if settings.hasPrimedScreenRecording {
+            settings.retryRecording()
+        } else {
+            showingPriming = true
+        }
+    }
 
     private func share() {
         isWorking = true

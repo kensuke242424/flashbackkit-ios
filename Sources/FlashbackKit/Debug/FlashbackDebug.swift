@@ -48,6 +48,19 @@ public extension Flashback {
         FlashbackController.shared.debugPresentReportUnavailable()
     }
 
+    /// DEBUG 専用: 画面収録 許可プライミングのシートを表示する（見た目確認用）。
+    /// 事前に `Flashback.start()` で overlay window が必要。
+    @MainActor
+    static func debugPresentPriming() {
+        FlashbackController.shared.debugPresentPriming()
+    }
+
+    /// DEBUG 専用: プライミング既読フラグをリセットする（実機で初回フローを再テストする用）。
+    @MainActor
+    static func debugResetPriming() {
+        FlashbackController.shared.debugResetPriming()
+    }
+
     /// DEBUG 専用: トースト（進行中 / 失敗）を表示する（見た目確認用）。
     /// - Parameter kind: `"failure"` で失敗トースト、それ以外は進行中トースト。
     @MainActor

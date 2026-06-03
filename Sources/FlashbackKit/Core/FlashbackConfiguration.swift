@@ -16,16 +16,24 @@ public struct FlashbackConfiguration: Sendable {
     /// 表示後は QA がドラッグで動かせる。
     public var floatingButtonCorner: FloatingButtonCorner
 
+    /// アプリ起動時に画面収録の許可を確認する（＝起動直後に `startCapture`）か。
+    /// **既定は false**：起動時に OS 許可ダイアログを出さず、ユーザが「録画をオンにする」
+    /// （→ プライミング）で能動的に開始する。設定トグルで opt-in でき、選択は永続化される
+    /// （永続値が無い初回のみ本既定値を採用）。
+    public var promptOnLaunch: Bool
+
     public init(
         bufferSeconds: TimeInterval = 20,
         isEnabled: Bool = true,
         triggers: FlashbackTrigger = .default,
-        floatingButtonCorner: FloatingButtonCorner = .bottomTrailing
+        floatingButtonCorner: FloatingButtonCorner = .bottomTrailing,
+        promptOnLaunch: Bool = false
     ) {
         self.bufferSeconds = bufferSeconds
         self.isEnabled = isEnabled
         self.triggers = triggers
         self.floatingButtonCorner = floatingButtonCorner
+        self.promptOnLaunch = promptOnLaunch
     }
 }
 

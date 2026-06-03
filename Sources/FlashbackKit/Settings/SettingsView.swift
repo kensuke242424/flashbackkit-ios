@@ -68,6 +68,9 @@ struct SettingsView: View {
 
     private var permissionSection: some View {
         Section {
+            // 起動時に権限を確認するか（既定オフ）。トグルは緑固定（青 tint に流されないよう明示）。
+            Toggle("アプリ起動時に権限を確認する", isOn: $store.promptOnLaunch)
+                .tint(FlashbackColor.success)
             HStack {
                 Text("画面収録")
                     .foregroundStyle(FlashbackColor.label)
@@ -96,7 +99,7 @@ struct SettingsView: View {
         } header: {
             Text("録画")
         } footer: {
-            Text("画面収録の許可はアプリ起動時に一度だけ確認されます（iOS の仕様上、設定での事前許可はできません）。拒否した場合は「録画を有効にする」で再試行するか、アプリを再起動してください。")
+            Text("「アプリ起動時に権限を確認する」をオンにすると、起動直後に画面収録の許可を確認します。オフのときは「録画をオンにする」を押したときだけ確認します（iOS の仕様上、設定での事前許可はできません）。")
         }
     }
 }

@@ -70,6 +70,14 @@ struct ContentView: View {
             }
             .buttonStyle(.bordered)
 
+            // 画面収録 許可プライミングのシートを確認するための入口。
+            Button {
+                Flashback.debugPresentPriming()
+            } label: {
+                Label("許可プライミングを開く", systemImage: "hand.raised")
+            }
+            .buttonStyle(.bordered)
+
             // 設定画面を確認するための入口。
             Button {
                 Flashback.debugPresentSettings()
@@ -116,6 +124,12 @@ struct ContentView: View {
             if ProcessInfo.processInfo.environment["FLASHBACK_UNAVAILABLE_DEMO"] != nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     Flashback.debugPresentReportUnavailable()
+                }
+            }
+            // FLASHBACK_PRIMING_DEMO で起動直後に許可プライミングのシートを自動提示する。
+            if ProcessInfo.processInfo.environment["FLASHBACK_PRIMING_DEMO"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    Flashback.debugPresentPriming()
                 }
             }
             // FLASHBACK_TOAST_DEMO=progress|failure で起動直後にトーストを自動表示する。
