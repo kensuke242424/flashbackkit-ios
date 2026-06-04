@@ -109,9 +109,8 @@ reproduce it?" round-trips.
 ## Installation
 
 > [!NOTE]
-> No tagged release exists yet. Until the first version is published, install from the
-> `main` branch (a version-based `from:` rule will fail to resolve). API may change
-> before 1.0.
+> Latest release: **`0.1.0`** — pre-1.0, so the public API may change before a stable
+> 1.0. Pin an exact version if you need stability.
 
 ### Swift Package Manager (Xcode)
 
@@ -121,12 +120,13 @@ reproduce it?" round-trips.
 https://github.com/kensuke242424/flashbackkit-ios.git
 ```
 
-Until the first tagged release, set **Dependency Rule = Branch → `main`**.
+Set **Dependency Rule = Up to Next Major Version** from `0.1.0` (or pin **Exact** `0.1.0`
+while the API is pre-1.0).
 
 ### Package.swift
 
 ```swift
-.package(url: "https://github.com/kensuke242424/flashbackkit-ios.git", branch: "main")
+.package(url: "https://github.com/kensuke242424/flashbackkit-ios.git", from: "0.1.0")
 ```
 
 ```swift
