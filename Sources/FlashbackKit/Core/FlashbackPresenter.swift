@@ -163,7 +163,7 @@ final class FlashbackPresenter {
     }
 
     /// 情報トースト（操作ヒント）。一定時間で自動的に消える。能動的な操作を伴わない
-    /// 一過性の案内（例: FAB を短くタップした時の「長押しでレポート」）に使う。
+    /// 一過性の案内（例: FAB を短くタップした時の「長押しでレポート起動」）に使う。
     /// 世代カウンタで「この自動消去が出した info をまだ表示中の時だけ」消し、
     /// 後から別トースト（進行中など）が乗った場合は誤って消さない。
     func showInfo(_ message: String, duration: TimeInterval = 1.8) {
@@ -179,6 +179,13 @@ final class FlashbackPresenter {
     /// トーストを消す。
     func hideToast() {
         model.toast = nil
+    }
+
+    /// 進行中（progress）トーストだけを消す。長押しの早出し進行中トーストの取消用。
+    /// info（操作ヒント）や failure は消さない（短タップで出したヒントを、同じ指離れの
+    /// `onPressCancel` が直後に巻き込んで消す競合を防ぐ）。
+    func hideProgressToast() {
+        if case .progress = model.toast { model.toast = nil }
     }
 
     #if DEBUG
@@ -283,7 +290,7 @@ enum ToastContent {
     case progress(String)
     /// 失敗（赤アイコン＋青「再試行」）。自動では閉じない。
     case failure(message: String, onRetry: () -> Void)
-    /// 情報（操作ヒント。一定時間で自動消去）。例:「長押しでレポート」。
+    /// 情報（操作ヒント。一定時間で自動消去）。例:「長押しでレポート起動」。
     case info(String)
 }
 
@@ -396,5 +403,6 @@ final class FlashbackPresenter {
     func showFailure(_ message: String, onRetry: @escaping () -> Void) {}
     func showInfo(_ message: String, duration: TimeInterval = 1.8) {}
     func hideToast() {}
+    func hideProgressToast() {}
 }
 #endif

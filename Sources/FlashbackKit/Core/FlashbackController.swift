@@ -204,12 +204,14 @@ final class FlashbackController {
             guard let self, self.recorder.isRecording else { return }
             self.presenter.showProgress("記憶を辿っています…")
         }
-        fab.onPressCancel = { [weak self] in self?.presenter.hideToast() }
+        // 早出しした「進行中」トーストだけを取り消す（info ヒントは消さない）。短タップ時は
+        // handleTap が先に出した「長押しでレポート起動」ヒントを、直後の指離れで消さないため。
+        fab.onPressCancel = { [weak self] in self?.presenter.hideProgressToast() }
         // 録画オフ（グレー）でのタップ＝録画オン（起こす）。初見でも長押しを思いつかずに済む導線。
         // 端末で初回はプライミング（事前説明）を挟んでから OS 確認へ。
         fab.onWake = { [weak self] in self?.wakeRecordingFromFloatingButton() }
         // 録画オン（オレンジ）での短タップ＝無反応で終わらせず長押しを促すヒント。
-        fab.onShortTapHint = { [weak self] in self?.presenter.showInfo("長押しでレポート") }
+        fab.onShortTapHint = { [weak self] in self?.presenter.showInfo("長押しでレポート起動") }
         fab.start()
         floatingButtonTrigger = fab
         detectors.append(fab)
