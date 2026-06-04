@@ -173,6 +173,8 @@ private struct DummyGalleryTab: View {
 /// 各 ReportView 状態 / 設定 / プライミングを即プレビューする開発用入口を集約したタブ。
 /// ホームをすっきり保つため、これらはここへ寄せる（env 変数でも起動直後に提示可能）。
 private struct DebugTab: View {
+    @State private var resetNote: String?
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -219,6 +221,17 @@ private struct DebugTab: View {
                     }
                     .buttonStyle(.bordered)
 
+                    // 一度だけ出るプライミング（事前説明）の既読フラグをリセットし、初回フローを再テストする。
+                    // リセット後は録画オフ（グレー）状態で FAB をタップすると再び表示される。
+                    Button(role: .destructive) {
+                        Flashback.debugResetPriming()
+                        resetNote = "プライミング既読をリセットしました。録画オフ（グレー）の FAB をタップで再表示。"
+                    } label: {
+                        Label("プライミング既読をリセット", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
                     Button {
                         Flashback.debugPresentSettings()
                     } label: {
@@ -234,8 +247,33 @@ private struct DebugTab: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
+
+                    // 一度だけ出るシェイク案内（端末1回）の既読フラグをリセットし、初回提示を再テストする。
+                    // リセット後は設定でフローティングボタン表示を OFF にした直後に再び自動提示される。
+                    Button(role: .destructive) {
+                        Flashback.debugResetShakeHint()
+                        resetNote = "シェイク案内の既読をリセットしました。設定で FAB 表示を OFF にすると再表示。"
+                    } label: {
+                        Label("シェイク案内の既読をリセット", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+
+                    if let resetNote {
+                        Text(resetNote)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .transition(.opacity)
+                    }
                 }
                 .padding(16)
+                .animation(.easeInOut, value: resetNote)
+                .task(id: resetNote) {
+                    guard resetNote != nil else { return }
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    resetNote = nil
+                }
             }
             .navigationTitle("デバッグ")
         }
