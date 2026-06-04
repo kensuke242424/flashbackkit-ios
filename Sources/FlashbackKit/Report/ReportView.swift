@@ -43,36 +43,52 @@ struct ReportView: View {
     @State private var isWorking = false
     @State private var showingSettings = false
     @State private var showingPriming = false
+    /// タイトル入力のフォーカス状態（フォーカス時に環境情報をキーボードの上へスクロールする）。
+    @FocusState private var titleFocused: Bool
 
     private var hasClip: Bool { clipURL != nil }
+    /// `ScrollViewReader` 用: 環境情報セクションのスクロールアンカー ID。
+    private static let deviceInfoAnchor = "fb.deviceInfo"
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let clipURL {
-                        // ハーフ（.medium）は動画を主役に大きく（クリップバーが隠れない上限 ~220）。
-                        // 展開（.large）はシート下部に余白が余りがちなので、動画をさらに大きくして埋める。
-                        VideoTrimmerView(
-                            url: clipURL,
-                            selection: $selection,
-                            previewMaxHeight: detent.isExpanded ? 360 : 220
-                        )
-                        titleField
-                    } else if settings.recordingJustEnabled {
-                        justEnabledInvitation
-                    } else if settings.isRecordingAvailable() {
-                        dormantInvitation        // 録画オフ（拒否など）。再試行できるので CTA あり。
-                    } else {
-                        unavailableInvitation    // この端末/環境では録画不可。CTA なし。
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 20) {
+                        if let clipURL {
+                            // ハーフ（.medium）は動画を主役に大きく（クリップバーが隠れない上限 ~220）。
+                            // 展開（.large）はシート下部に余白が余りがちなので、動画をさらに大きくして埋める。
+                            VideoTrimmerView(
+                                url: clipURL,
+                                selection: $selection,
+                                previewMaxHeight: detent.isExpanded ? 360 : 220
+                            )
+                            titleField
+                        } else if settings.recordingJustEnabled {
+                            justEnabledInvitation
+                        } else if settings.isRecordingAvailable() {
+                            dormantInvitation        // 録画オフ（拒否など）。再試行できるので CTA あり。
+                        } else {
+                            unavailableInvitation    // この端末/環境では録画不可。CTA なし。
+                        }
+                        DeviceInfoSection(device: device)
+                            .id(Self.deviceInfoAnchor)
                     }
-                    DeviceInfoSection(device: device)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent.isExpanded)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent.isExpanded)
+                .scrollDismissesKeyboard(.interactively)
+                // タイトルにフォーカスが当たったら、下にある環境情報をキーボードの上へスクロールで見せる
+                // （位置は変えず、端末情報を見ながらタイトルへ書き写せるように）。下端 inset が確定する
+                // キーボード出現後（didShow）に合わせて確実に上へ出す。フォーカス時にも即時で寄せておく。
+                .onChange(of: titleFocused) { focused in
+                    if focused { scrollDeviceInfoAboveKeyboard(proxy) }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardDidShowNotification)) { _ in
+                    if titleFocused { scrollDeviceInfoAboveKeyboard(proxy) }
+                }
             }
-            .scrollDismissesKeyboard(.interactively)
             .background(FlashbackColor.background)
             .navigationTitle("レポート")           // 子（設定）の戻るボタン文言。中央は principal で上書き。
             .navigationBarTitleDisplayMode(.inline)
@@ -139,6 +155,7 @@ struct ReportView: View {
                 text: $title,
                 prompt: Text("タイトルを入力").foregroundColor(FlashbackColor.tertiaryLabel)
             )
+            .focused($titleFocused)
             .font(FlashbackFont.body)
             .foregroundStyle(FlashbackColor.label)
             .padding(.horizontal, 12)
@@ -280,6 +297,15 @@ struct ReportView: View {
     }
 
     // MARK: - アクション
+
+    /// 環境情報セクションをキーボードの上端へスクロールして見せる（タイトル位置は変えない）。
+    /// タイトル＋環境情報はキーボード上の領域に十分収まるため、`.bottom` 寄せでも
+    /// タイトルは上に残る＝端末情報を見ながら入力できる。
+    private func scrollDeviceInfoAboveKeyboard(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.25)) {
+            proxy.scrollTo(Self.deviceInfoAnchor, anchor: .bottom)
+        }
+    }
 
     /// 「録画をオンにする」: 端末で初回はプライミングを提示、2回目以降は直接 OS 確認（再試行）。
     private func enableRecordingTapped() {
