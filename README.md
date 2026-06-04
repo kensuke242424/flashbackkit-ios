@@ -1,22 +1,132 @@
-# FlashbackKit
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="design/brand_assets/lockup/flashbackkit-lockup-on-dark-2x.png">
+    <img src="design/brand_assets/lockup/flashbackkit-lockup-on-light-2x.png" alt="FlashbackKit" width="440">
+  </picture>
+</p>
 
-> Recall the moment before the bug.
+<p align="center"><em>Recall the moment <strong>before</strong> the bug.</em></p>
 
-不具合発生“前”の文脈を取り戻す、モバイル QA 向けの AI レポート SDK（iOS）。
-トリガ（端末を振る / 3本指で長押し / フローティングボタン）→ 直前 30 秒の録画・コメント・端末情報をまとめ、AI がレポート化して Slack へ送る。
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-iOS%2016%2B-blue" alt="iOS 16+">
+  <img src="https://img.shields.io/badge/Swift-6-orange" alt="Swift 6">
+  <img src="https://img.shields.io/badge/SwiftPM-compatible-brightgreen" alt="SwiftPM">
+  <img src="https://img.shields.io/badge/dependencies-none-success" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/license-MIT-black" alt="MIT">
+</p>
 
-> **Status: PoC / WIP.** 本番一般ユーザー向けではなく、Debug / Staging / TestFlight / 社内 QA 用途を想定。
+---
+
+A zero-dependency iOS SDK that captures the **context right before a bug happens** — the
+last N seconds of screen recording, a one-line note, and full device info — and hands it
+off to your pipeline (AI summarizer, Slack, Jira, your own backend) in one callback.
+
+Testers always notice the bug *after* it happens. By then the steps that led there are
+gone. FlashbackKit keeps a rolling buffer of the screen, so when a tester files a report,
+the seconds **leading up to the bug** are already captured — sparing you the "can you
+reproduce it?" round-trips.
+
+> [!NOTE]
+> **Status: PoC / WIP.** Built for Debug / Staging / TestFlight / internal QA builds —
+> not for shipping to end users. The design bias is making testers *want* to use it and
+> improving reproducibility, over architectural purity. The public API may change before
+> a 1.0 release.
+
+<details>
+<summary>UI preview (design mockups)</summary>
+
+<br>
+
+![FlashbackKit screens](design/design_handoff_flashbackkit/screenshots/all-screens.png)
+
+</details>
+
+## Contents
+
+- [Highlights](#highlights)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [The `onReport` handoff](#the-onreport-handoff)
+- [Triggers](#triggers)
+- [Privacy & masking sensitive data](#privacy--masking-sensitive-data)
+- [Security](#security)
+- [Known constraints](#known-constraints)
+- [Example app](#example-app)
+- [Debug helpers](#debug-helpers)
+- [Tests](#tests)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Highlights
+
+- **The "before" is already recorded** — an always-on ReplayKit ring buffer means the last
+  N seconds are *already captured* when a report is triggered. ReplayKit can't rewind, so
+  this is the only way to get the pre-bug context.
+- **Zero dependencies** — just UIKit / SwiftUI / ReplayKit from the system SDK. No
+  Firebase, Alamofire, or Rx, and no network client of its own. Drops into any app and
+  keeps your dependency graph clean.
+- **Two triggers, your choice** — shake the device twice, or a draggable floating button
+  for fixed/kiosk devices. Pick either or both.
+- **Trim before you send** — testers preview the clip and trim to the relevant moment in a
+  built-in editor; the title and device info are baked into the exported file.
+- **One handoff point** — a single `onReport` callback gives you the trimmed clip, the
+  title, and device info. Route it anywhere. *The SDK's job ends at "here's the report."*
+- **Unfiltered by design** — iOS excludes secure text fields from the recording for free,
+  but masking everything else is the host app's responsibility (see
+  [Privacy](#privacy--masking-sensitive-data)). The SDK does not redact the recording
+  itself.
+
+## How it works
+
+```
+ trigger (shake twice / floating button)
+        │
+        ▼
+ export the last N seconds from the ring buffer
+        │
+        ▼
+ Report UI  ──►  preview + trim  +  one-line title  +  auto device info
+        │
+        ▼
+ Share (↑)  ──►  trims, bakes metadata, opens the system share sheet
+        │         (save to Photos / Files / AirDrop / other apps)
+        ▼
+ onReport(FlashbackReport)  ──►  your pipeline (AI / Slack / Jira / backend)
+```
 
 ## Requirements
 
-- iOS 16+
-- Swift 6 / Xcode 16+
-- 依存ライブラリなし（Firebase / Alamofire / Rx 不使用）
+| | |
+|---|---|
+| Platform | iOS 16+ |
+| Toolchain | Swift 6 / Xcode 16+ |
+| Dependencies | none |
 
-## Installation (SPM)
+## Installation
+
+> [!NOTE]
+> No tagged release exists yet. Until the first version is published, install from the
+> `main` branch (a version-based `from:` rule will fail to resolve). API may change
+> before 1.0.
+
+### Swift Package Manager (Xcode)
+
+**File → Add Package Dependencies…** and enter:
+
+```
+https://github.com/kensuke242424/flashbackkit-ios.git
+```
+
+Until the first tagged release, set **Dependency Rule = Branch → `main`**.
+
+### Package.swift
 
 ```swift
-.package(url: "https://github.com/<you>/flashbackkit-ios.git", from: "0.0.1")
+.package(url: "https://github.com/kensuke242424/flashbackkit-ios.git", branch: "main")
 ```
 
 ```swift
@@ -25,104 +135,171 @@
 
 ## Quick Start
 
+Call `Flashback.start()` **once** at app launch (e.g. in `App.init`,
+`didFinishLaunching`, or your root view's `.onAppear`):
+
 ```swift
 import FlashbackKit
 
-// アプリ起動時に一度だけ
 Flashback.start(
-    configuration: .init(
-        bufferSeconds: 30,
-        slackWebhookURL: URL(string: "https://hooks.slack.com/services/...")
-    )
-)
-```
-
-トリガ → トリミング画面で、QA は右上の **共有（↑）** から OS 標準シート
-（写真に保存 / ファイルに保存 / AirDrop / 他アプリ）を開く。出口はこの一つに集約。
-共有するクリップはタイトル＝コメント・ファイル名＝コメントでメタデータが焼き込まれる。
-
-### 成果物を受け取る（`onReport` ハンドオフ）
-
-録画 → トリムまで終えた成果物 `FlashbackReport`（クリップ URL・端末情報・コメント）は、
-保存 / 共有 を確定した時点で `onReport` でホストへ手渡される。AI 要約・自社 API・Jira
-連携などホスト固有の処理はこのコールバックから自由にルーティングできる。
-**SDK の責務は成果物を渡すところまで**。
-
-```swift
-Flashback.start(
+    configuration: .init(bufferSeconds: 30),
     onReport: { report in
-        // report.clipURL（トリム済みクリップ）, report.device, report.comment …
-        myBackend.upload(report.clipURL)
+        // report.clipURL  — trimmed clip (temp file); nil when capture wasn't running
+        // report.title    — the tester's one-line note
+        // report.device   — model / OS / app version / locale …
+        myBackend.upload(report)
     }
 )
 ```
 
-> `report.clipURL` は一時ファイル。残す場合はこのコールバック内でコピー／アップロードすること。
+From here a tester triggers a report (shake twice, or the floating button), trims the
+clip, types a title, and taps **Share (↑)** — which opens the system share sheet *and*
+fires your `onReport`.
 
-### 必要な Info.plist キー
+> [!IMPORTANT]
+> **With the defaults (`promptOnLaunch: false`), nothing records and no iOS permission
+> prompt appears at launch.** The tester starts recording by tapping the grey floating
+> button (which shows a one-time priming sheet, then the iOS prompt). The trim → title →
+> Share flow — and `onReport` — only happen once recording is on and a clip exists.
+> Triggering *before* recording is enabled shows a "recording is off" screen with a
+> one-tap enable, and does **not** fire `onReport`. To record from launch, set
+> `promptOnLaunch: true`.
 
-共有シートの **「写真に保存」でカメラロールに保存する**ため、ホストアプリの Info.plist に
-追記が必要（無いと権限要求時にクラッシュする）。「ファイルに保存」だけ使うなら不要:
+To halt recording and remove the triggers/overlay at runtime (e.g. when leaving a QA
+session, or before a sensitive screen), call `Flashback.stop()` — the counterpart to
+`start()`.
+
+> [!IMPORTANT]
+> `report.clipURL` points to a temporary file. If you need to keep it, copy or upload it
+> **inside** the `onReport` callback.
+
+## Configuration
+
+All fields are optional; defaults shown.
+
+```swift
+Flashback.start(
+    configuration: .init(
+        bufferSeconds: 20,                 // rolling buffer length (seconds)
+        isEnabled: true,                   // master switch — set false to no-op in Release
+        triggers: .default,                // [.shake, .floatingButton]
+        floatingButtonCorner: .bottomTrailing,
+        promptOnLaunch: false,             // ask for screen-recording permission at launch
+        runsOnSimulator: false             // ReplayKit can't record on the Simulator
+    )
+)
+```
+
+| Option | Type | Default | Notes |
+|---|---|---|---|
+| `bufferSeconds` | `TimeInterval` | `20` | How many seconds of "before" to retain. Also adjustable by the tester in-app. |
+| `isEnabled` | `Bool` | `true` | Master kill-switch. Gate it so the SDK is inert in Release builds. |
+| `triggers` | `FlashbackTrigger` | `.default` | OptionSet of `.shake` and/or `.floatingButton`. |
+| `floatingButtonCorner` | `FloatingButtonCorner` | `.bottomTrailing` | Initial corner of the floating button. |
+| `promptOnLaunch` | `Bool` | `false` | If `true`, requests screen-recording permission at launch (otherwise on first enable). |
+| `runsOnSimulator` | `Bool` | `false` | The SDK no-ops on the Simulator unless you opt in (recording still won't work there). |
+
+> [!NOTE]
+> Several settings — `promptOnLaunch`, the buffer length (`bufferSeconds`), and
+> floating-button visibility — are also adjustable by the tester in the in-app settings.
+> The in-app choice is **persisted and takes precedence over the config default after
+> first launch**, so the config value mainly governs the very first run. (A tester who
+> once opted into launch recording will keep buffering at launch even if the config says
+> `false`.)
+
+> [!NOTE]
+> With the default `runsOnSimulator: false`, `start()` is a **complete no-op on the
+> Simulator** — no floating button, no overlay, no prompt. Set `runsOnSimulator: true` to
+> see the UI on the Simulator, but recording still won't run there; test recording on a
+> device.
+
+## The `onReport` handoff
+
+`onReport` is the **only** extension point. FlashbackKit captures, trims, and packages —
+then hands you a `FlashbackReport`. Everything downstream (AI summary, Slack, Jira, your
+own service) is yours to wire up.
+
+`onReport` is delivered on the **main actor** (`@MainActor`). Do network/disk work inside
+a `Task` (as shown below) so you don't block the UI.
+
+```swift
+public struct FlashbackReport: Sendable {
+    public var title: String      // one-line note typed by the tester
+    public var device: DeviceInfo // model, OS, app version, locale, …
+    public var clipURL: URL?      // trimmed clip (temp file); nil when capture wasn't running
+}
+```
+
+```swift
+Flashback.start(onReport: { report in
+    Task {
+        // e.g. summarize with an LLM, then post to Slack with a link to the uploaded clip
+        let summary = await llm.summarize(title: report.title, device: report.device)
+        let link: String? = if let url = report.clipURL {
+            await storage.upload(url)
+        } else {
+            nil
+        }
+        await slack.post(text: summary, videoLink: link)
+    }
+})
+```
+
+> [!TIP]
+> FlashbackKit does **not** call any AI or Slack APIs itself — there's no embedded
+> network client and no webhook config. This keeps the SDK dependency-free and lets you
+> use whatever backend you already have.
+
+### Required Info.plist key (only for "Save to Photos")
+
+The share sheet's **Save to Photos** path writes to the camera roll, which needs a usage
+description in the **host app's** Info.plist (omitting it crashes on permission request).
+Not needed if you only use "Save to Files":
 
 ```xml
 <key>NSPhotoLibraryAddUsageDescription</key>
-<string>不具合レポートの直前録画クリップをカメラロールに保存します。</string>
+<string>Saves the pre-bug screen clip from your report to your photo library.</string>
 ```
 
-## Example アプリ
+## Triggers
 
-`Example/FlashbackExample.xcodeproj` に仮UIループ確認用のホストアプリがある。
+| Trigger | Best for | Gesture |
+|---|---|---|
+| `.shake` | handheld testing | shake the device twice (a deliberate double-shake; one weak shake won't fire) |
+| `.floatingButton` | fixed / kiosk / one-handed | state-dependent: tap to start recording (grey), long-press to open the report (orange), drag to move — see below |
 
-- **Simulator**: そのままビルド可（署名不要）。ただし ReplayKit の画面キャプチャは
-  Simulator では動かないため、録画は無効化され clip なしでループだけ動く。
-- **実機**: コード署名が必要。Team ID はリポジトリに含めないので、各自で設定する:
+### Floating button interaction
 
-  ```sh
-  cp Example/Signing.example.xcconfig Example/Signing.xcconfig
-  # Signing.xcconfig を開き DEVELOPMENT_TEAM に自分の Apple Developer Team ID を記入
-  ```
+The floating button doubles as a recording-state indicator, and its gesture depends on
+that state so first-time users aren't stuck guessing:
 
-  `Signing.xcconfig` は `.gitignore` 済み。`Config.xcconfig` が optional include で
-  読み込むため、未作成でも Simulator ビルドは警告なく通る。
+- **Grey (recording off)** → **tap to start recording.** The first time, a short priming
+  sheet explains why screen-recording permission is needed, then iOS asks.
+- **Orange (recording on)** → **long-press (0.5s) to open the report.** A short tap shows
+  a "long-press to open" hint instead of doing nothing.
+- **Drag** to reposition; it snaps to the nearest edge and can tuck away.
+- VoiceOver: double-tap activates the state-appropriate action (no long-press required).
 
-## MVP Scope
+When the floating button is turned off, the SDK shows a one-time "shake twice to open"
+hint so testers know the shake trigger is available.
 
-複数トリガ起動（シェイク / 多指長押し / フローティングボタン）/ 直前録画 / コメント入力 / AI 要約 / Slack 送信
+## Privacy & masking sensitive data
 
-## Known Constraints（実装前に要注意）
+Screen recording captures **everything on screen** (customer names, tokens, inventory…).
+FlashbackKit deliberately does **not** intercept the recording pipeline — masking is the
+host app's responsibility, because only the host knows what's sensitive.
 
-- **ReplayKit は遡って録画できない** → 常時バッファ録画が前提（起動毎に録画許可プロンプトが出る／発熱・電池負荷あり）
-- **Slack Incoming Webhook は動画を送れない**（テキスト / リンクのみ。動画は Bot トークン + files.getUploadURLExternal/completeUploadExternal が必要）
-- **Claude / OpenAI は動画を直接解析できない**（キーフレーム抽出 or 動画ネイティブモデルが必要）
-- 画面録画は画面上の全情報を含む → **センシティブ情報のマスキングはホストアプリの責務**（後述）
-
-## Privacy: センシティブ情報のマスキング
-
-画面録画は画面上の全情報（顧客名・住所・在庫数・トークン等）を含む。これらのマスキングは
-**ホストアプリの責務**であり、FlashbackKit は録画パイプラインに介入しない。
-
-理由: ReplayKit のアプリ内キャプチャは「合成後の画面全体」を渡してくるため、SDK 側で特定 View
-だけを隠すには座標追跡＋リアルタイムなピクセル書き換えが要る。座標変換・性能・実機限定検証の
-コストが高い割に、結局「どこが機密か」はホストしか知らない。依存ゼロ・PoC の方針からも、
-マスキングはホスト側の View 技法に倒すのが筋。
-
-### パスワード等は iOS が自動で除外する
-
-`isSecureTextEntry = true` の `UITextField` は、iOS が ReplayKit / スクリーンショットから
-**自動的に除外**する。パスワード欄は追加対応なしで録画に映らない。
-
-### それ以外の機密 View はホスト側で隠す
-
-顧客情報など secure フィールド以外を隠したい場合、ホスト側で対象 View を覆う／消す:
-
-- **確実な方法**: QA 対象ビルドでは機密画面をダミーデータにする、または録画中はその画面を出さない運用。
-- **セキュアレイヤー・トリック（非公式）**: `isSecureTextEntry` なテキストフィールドのレイヤーに
-  コンテンツを載せると、ユーザーには見えたまま録画からは除外される。iOS バージョンで挙動が
-  変わりうる非公式手法のため、確実性が要る場面では上記運用を優先する。
+- **Password fields are handled for free.** iOS automatically excludes
+  `isSecureTextEntry = true` `UITextField`s from ReplayKit and screenshots.
+- **Everything else is up to you.** The most reliable approach is to use dummy data in QA
+  builds, or not show sensitive screens while recording (you can call `Flashback.stop()`
+  to suspend capture before one).
+- **Secure-layer trick (unofficial).** Hosting a view inside a secure text field's layer
+  keeps it visible to the user but excluded from capture. Behavior varies by iOS version,
+  so prefer the operational approach when certainty matters.
 
   ```swift
-  // ホストアプリ側のユーティリティ例（FlashbackKit には含めない）。
-  // secure な UITextField のコンテンツレイヤーへ対象 View を載せ、録画から除外する。
+  // Host-side utility (not part of FlashbackKit).
   extension UIView {
       func hideFromScreenCapture(_ content: UIView) {
           let field = UITextField()
@@ -133,9 +310,81 @@ Flashback.start(
   }
   ```
 
-> 補足: 端末保存や共有でクリップを写真ライブラリへ保存すると iCloud にも乗りうる。
-> 機密を含みうる点に留意する（保存先は QA が保存／共有時に選ぶ）。
+> Saving or sharing a clip to the photo library may sync it to iCloud. The destination is
+> chosen by the tester at share time — keep that in mind for sensitive content.
+
+## Security
+
+This SDK records the screen, so clips can contain sensitive data. If you find a security
+issue (e.g. a clip leak), please report it **privately** — use GitHub's
+["Report a vulnerability"](https://github.com/kensuke242424/flashbackkit-ios/security/advisories/new)
+flow rather than filing a public issue.
+
+## Known constraints
+
+These are platform realities the design works *around*, not bugs:
+
+- **ReplayKit can't record retroactively** → an always-on ring buffer is required. This
+  means a screen-recording permission prompt and some battery/thermal cost while active.
+- **Slack Incoming Webhooks can't send video** → text/links only. For an actual video
+  attachment, use a Bot token with `files.getUploadURLExternal` / `completeUploadExternal`,
+  or host the clip elsewhere and link to it.
+- **Claude / OpenAI can't analyze video directly** → extract keyframes, or use a
+  video-native model.
+
+## Example app
+
+`Example/FlashbackExample.xcodeproj` is a host app that exercises the full loop.
+
+- **Simulator** — builds as-is (no signing). ReplayKit capture doesn't work on the
+  Simulator, so recording is disabled and the loop runs without a clip. The Example opts
+  in via `runsOnSimulator: true` so you can still see the UI — your own app, with the
+  default `runsOnSimulator: false`, will show nothing on the Simulator.
+- **Device** — needs code signing. Team IDs aren't committed, so set yours:
+
+  ```sh
+  cp Example/Signing.example.xcconfig Example/Signing.xcconfig
+  # edit Signing.xcconfig → set DEVELOPMENT_TEAM to your Apple Developer Team ID
+  ```
+
+  `Signing.xcconfig` is gitignored and included optionally, so Simulator builds pass even
+  without it.
+
+## Debug helpers
+
+In `DEBUG` builds, `Flashback` exposes helpers to present each UI state directly (handy on
+the Simulator or for re-testing first-run flows) — e.g.
+`debugPresentSampleReport(seconds:)`, `debugPresentEmptyReport()`,
+`debugPresentRecordingJustEnabled()`, `debugPresentReportUnavailable()`,
+`debugPresentPriming()`, `debugResetPriming()`, `debugPresentShakeHint()`,
+`debugResetShakeHint()`, `debugShowToast(_:)`, `debugPresentSettings()`. They require
+`Flashback.start()` to have installed the overlay.
+
+## Tests
+
+```sh
+xcodebuild test -scheme FlashbackKit -destination 'platform=iOS Simulator,name=iPhone 16'
+```
+
+> `swift build` is intentionally not used — it targets the macOS host and breaks on UIKit.
+> Build for iOS instead:
+> `xcodebuild -scheme FlashbackKit -destination 'generic/platform=iOS' build`.
+
+## Roadmap
+
+FlashbackKit currently covers: multi-trigger launch → pre-bug recording → trim → device
+info → `onReport` handoff. Summarization and delivery (AI, Slack, etc.) live on the host
+side by design.
+
+## Contributing
+
+Issues and PRs are welcome — file bugs and ideas in
+[Issues](https://github.com/kensuke242424/flashbackkit-ios/issues) (for recording
+behavior, please note whether you saw it on a device or the Simulator). Please keep the
+**zero-dependency** rule (no third-party packages) and match the existing style: `public`
+API gets doc comments, and types that touch UI / recording / shake detection are
+`@MainActor`.
 
 ## License
 
-MIT
+[MIT](LICENSE)
