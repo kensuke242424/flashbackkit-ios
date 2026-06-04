@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="design/brand_assets/lockup/flashbackkit-lockup-on-dark-2x.png">
-    <img src="design/brand_assets/lockup/flashbackkit-lockup-on-light-2x.png" alt="FlashbackKit" width="440">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/flashbackkit-logo-dark.png">
+    <img src="docs/flashbackkit-logo-light.png" alt="FlashbackKit" width="440">
   </picture>
 </p>
 
@@ -37,7 +37,7 @@ reproduce it?" round-trips.
 
 <br>
 
-![FlashbackKit screens](design/design_handoff_flashbackkit/screenshots/all-screens.png)
+![FlashbackKit screens](docs/screenshots.png)
 
 </details>
 
