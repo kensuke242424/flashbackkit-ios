@@ -15,6 +15,9 @@ import SwiftUI
 /// 全画面 hosting view に混ぜるとタップ判定がパススルーに巻き込まれる）。
 @MainActor
 final class FlashbackPresenter {
+    /// レポートのハーフ（未展開）detent。`.medium` より少し高く、下のタイトル入力を覗かせる。
+    static let halfDetentID = UISheetPresentationController.Detent.Identifier("flashbackHalf")
+
     private let model = OverlayModel()
     private var window: UIWindow?
     private weak var reportHost: UIViewController?
@@ -127,11 +130,19 @@ final class FlashbackPresenter {
             settings: settings,
             detent: detent
         )
-        let host = UIHostingController(rootView: report)
+        // 最下部のキャプチャボタンを下端ドラッグしても OS のジェスチャに取られないよう、
+        // 下端のシステムジェスチャを遅延させるホストで提示する。
+        let host = DeferBottomGesturesHostingController(rootView: report)
         host.modalPresentationStyle = .pageSheet
         if let sheet = host.sheetPresentationController {
-            sheet.detents = [.medium(), .large()]
-            sheet.selectedDetentIdentifier = .medium      // 初回はハーフ（クリップバーまで）。
+            // 標準の .medium だと録画 View＋トリマーでちょうど埋まり、下のタイトル入力が完全に
+            // 隠れて「続きがある」ことが伝わらない。少しだけ高いカスタム detent で覗かせる
+            // （同時に最下部のキャプチャボタンも下端のシステムジェスチャ帯から離れる）。
+            let halfDetent = UISheetPresentationController.Detent.custom(identifier: Self.halfDetentID) { context in
+                context.maximumDetentValue * 0.58
+            }
+            sheet.detents = [halfDetent, .large()]
+            sheet.selectedDetentIdentifier = Self.halfDetentID   // 初回はハーフ（タイトルを覗かせる高さ）。
             sheet.prefersGrabberVisible = true            // 上スワイプで開けると示すグラバー。
             let delegate = ReportSheetDelegate(model: detent)
             sheet.delegate = delegate
@@ -455,6 +466,13 @@ private struct ToastCapsule<Content: View>: View {
             .background(Color(uiColor: ToastPalette.background), in: Capsule())
             .shadow(color: .black.opacity(0.18), radius: 8, y: 2)
     }
+}
+
+/// 画面最下部のシステムジェスチャ（ホームインジケータの横スワイプ＝アプリ切替や、上スワイプ）を
+/// 一拍遅延させるホスティングコントローラ。レポートのトリマー最下部に置いたキャプチャボタンを
+/// 下端でドラッグしても、OS のジェスチャに取られず（要・二度目のスワイプで発火）スクラブできる。
+private final class DeferBottomGesturesHostingController<Content: View>: UIHostingController<Content> {
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { .bottom }
 }
 
 #else

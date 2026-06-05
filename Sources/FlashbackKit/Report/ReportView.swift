@@ -60,8 +60,15 @@ struct ReportView: View {
                             // 展開（.large）はシート下部に余白が余りがちなので、動画をさらに大きくして埋める。
                             VideoTrimmerView(
                                 url: clipURL,
+                                // ハーフは少しだけ控えめ（200）にして、最下部のキャプチャボタンを
+                                // 画面下端のホームインジケータ帯から軽く持ち上げる（OS ジェスチャ競合の保険）。
+                                // 主因は deferring 側で対処済み。ここは録画 View を潰しすぎない範囲に留める。
                                 selection: $selection,
-                                previewMaxHeight: detent.isExpanded ? 360 : 220
+                                previewMaxHeight: detent.isExpanded ? 360 : 200,
+                                // 再生ヘッド位置のコマを画像化 → クリップ共有と同じ OS 標準シートで共有。
+                                onCaptureStill: { url in shareItem = ShareItem(url: url) },
+                                // スクショのファイル名／メタデータにもタイトルを反映（クリップと同様）。
+                                currentTitle: { title }
                             )
                             titleField
                         } else if settings.recordingJustEnabled {

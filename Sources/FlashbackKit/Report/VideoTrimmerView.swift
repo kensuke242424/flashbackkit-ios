@@ -2,6 +2,8 @@
 import SwiftUI
 import AVFoundation
 import UIKit
+import ImageIO
+import UniformTypeIdentifiers
 
 /// 直前クリップのプレビュー＋範囲トリミング UI。
 ///
@@ -15,6 +17,12 @@ struct VideoTrimmerView: View {
     @Binding var selection: ClosedRange<Double>
     /// プレビュー枠の最大高さ。ハーフモーダルでは小さく、展開時は大きく渡す。
     var previewMaxHeight: CGFloat = 280
+    /// 再生ヘッド位置の 1 フレームをフル解像度で画像化し、共有用の一時ファイル URL を渡す。
+    /// `nil` ならカメラ（静止画キャプチャ）ボタンを出さない。
+    var onCaptureStill: ((URL) -> Void)? = nil
+    /// キャプチャ時点のタイトル（レポート入力）を返す。クリップ共有と同様、ファイル名と
+    /// 画像メタデータへ反映する。入力途中の最新値を読むためクロージャで受ける。
+    var currentTitle: () -> String = { "" }
 
     /// これ以上は詰められない最小選択長（秒）。
     private let minimumDuration: Double = 1.0
@@ -26,6 +34,10 @@ struct VideoTrimmerView: View {
     @State private var isPlaying = false
     /// 再生ヘッドをドラッグ中か。periodic observer の playhead 上書きを止め、指追従にする。
     @State private var isScrubbing = false
+    /// 静止画の書き出し中か。二度押し抑止＋ボタンをスピナー表示にする。
+    @State private var isCapturingStill = false
+    /// キャプチャ時にプレビューを一瞬白く光らせる「撮った感」用の不透明度（0→0.85→0）。
+    @State private var flashOpacity: Double = 0
     @State private var timeObserver: Any?
     /// 動画の表示アスペクト比（幅/高さ）。尺確定時に実トラックから求め、プレビュー枠を
     /// これに合わせることで黒帯（レターボックス）を出さない。確定までは縦動画想定の暫定値。
@@ -52,6 +64,13 @@ struct VideoTrimmerView: View {
                                 .background(.black.opacity(0.35), in: Circle())
                                 .allowsHitTesting(false)
                         }
+                    }
+                    // スクショ時の白フラッシュ（撮影合図）。映像形状にクリップ・非対話。
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.white)
+                            .opacity(flashOpacity)
+                            .allowsHitTesting(false)
                     }
                     // 映像エリア全体をタップで再生/一時停止トグル（再生中タップで停止できる）。
                     .contentShape(RoundedRectangle(cornerRadius: 12))
@@ -91,9 +110,11 @@ struct VideoTrimmerView: View {
                 selection: $selection,
                 onScrub: { seconds in seek(to: seconds) },
                 onScrubBegan: { beginScrub() },
-                onScrubEnded: { isScrubbing = false }
+                onScrubEnded: { isScrubbing = false },
+                // 再生ヘッドの真下に追従するカメラボタンから静止画キャプチャを起動する。
+                onCapture: onCaptureStill != nil ? { captureStill() } : nil,
+                isCapturing: isCapturingStill
             )
-            .frame(height: 56)
         }
         .task(id: url) { await load() }
         .onDisappear { teardown() }
@@ -119,9 +140,13 @@ struct VideoTrimmerView: View {
 
         player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
         duration = seconds
-        // 初期値（未設定）なら全体を選択範囲にする。
+        // 初期値（未設定）なら、選択を「中間点〜終端」にする。直前の不具合は録画の終盤に
+        // 写りがちなので、取得したい終わり付近をすぐ触れるよう既定の始点を中間へ寄せる
+        // （最低選択長は確保）。再生ヘッド／プレビューも始点へ寄せ、キャプチャボタンも中央スタートに。
         if selection.lowerBound >= selection.upperBound {
-            selection = 0...seconds
+            let start = max(0, min(seconds / 2, seconds - minimumDuration))
+            selection = start...seconds
+            seek(to: start)
         }
         // 実トラックから表示アスペクト比を求めてプレビュー枠を合わせる（黒帯を出さない）。
         if let track = try? await asset.loadTracks(withMediaType: .video).first,
@@ -175,6 +200,80 @@ struct VideoTrimmerView: View {
         playhead = clamped
         player.seek(to: CMTime(seconds: clamped, preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    // MARK: - 静止画キャプチャ
+
+    /// 再生ヘッド位置の 1 フレームをフル解像度で抜き出し、PNG として一時ファイルに書いて共有へ渡す。
+    ///
+    /// `AVAssetImageGenerator` の許容誤差を 0 にして、再生ヘッドが当たっている厳密なコマを取る
+    /// （サムネ生成は速度優先で誤差∞なのと対照的）。回転は `appliesPreferredTrackTransform` で正す。
+    /// 元が圧縮済み動画フレームなので、再 JPEG 圧縮で文字が滲まないよう PNG で書き出す。
+    private func captureStill() {
+        guard duration > 0, !isCapturingStill else { return }
+        // 再生中なら止めて、見えているコマと書き出すコマを一致させる。
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+        }
+        playCaptureFeedback()   // 触覚＋プレビュー白フラッシュ（押した瞬間に「撮った感」を返す）
+        isCapturingStill = true
+        let seconds = min(max(playhead, 0), duration)
+        let time = CMTime(seconds: seconds, preferredTimescale: 600)
+        let sourceURL = url
+        let title = currentTitle()
+        // VideoTrimmerView は @MainActor なので、この Task も MainActor 隔離を継承する
+        // （UIImage/CGImage を隔離跨ぎさせない＝既知の Sendable 罠を踏まない）。
+        Task {
+            defer { isCapturingStill = false }
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: sourceURL))
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = .zero
+            guard let cg = try? await generator.image(at: time).image else { return }
+            let fileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(stillFileName(at: seconds, title: title))
+            try? FileManager.default.removeItem(at: fileURL)   // 同名衝突を避ける
+            guard writeTitledPNG(cg, title: title, to: fileURL) else { return }
+            onCaptureStill?(fileURL)
+        }
+    }
+
+    /// キャプチャの手応え。触覚（軽い衝撃）＋プレビューの白フラッシュ。
+    /// フラッシュは一旦点灯を確定させてから次フレームで減衰させる（同一ループで 0.85→0 を書くと
+    /// 中間の 0.85 が描画されず光らないため、減衰だけ非同期にずらす）。
+    private func playCaptureFeedback() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        flashOpacity = 0.85
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: 0.35)) { flashOpacity = 0 }
+        }
+    }
+
+    /// クリップ共有と同じ無害化（`ClipTrimmer.sanitizedFileName`＝空なら "Flashback"）でタイトルを
+    /// ファイル名に反映し、再生位置のタイムコードを添えて一意にする。AirDrop / ファイル.app で
+    /// タイトルがそのまま見えるようにする。
+    private func stillFileName(at seconds: Double, title: String) -> String {
+        let total = Int(seconds.rounded())
+        let stamp = String(format: "%dm%02ds", total / 60, total % 60)
+        return "\(ClipTrimmer.sanitizedFileName(title))-\(stamp).png"
+    }
+
+    /// PNG をタイトル付きで書き出す。タイトルは PNG の tEXt（Title / Description）として埋め込み、
+    /// クリップの mp4 メタデータ焼き込みと役割を揃える（ファイル名が主、メタデータは補助）。
+    private func writeTitledPNG(_ cgImage: CGImage, title: String, to url: URL) -> Bool {
+        guard let dest = CGImageDestinationCreateWithURL(
+            url as CFURL, UTType.png.identifier as CFString, 1, nil
+        ) else { return false }
+        var properties: [CFString: Any] = [:]
+        if !title.isEmpty {
+            properties[kCGImagePropertyPNGDictionary] = [
+                kCGImagePropertyPNGTitle: title,
+                kCGImagePropertyPNGDescription: title,
+            ]
+        }
+        CGImageDestinationAddImage(dest, cgImage, properties as CFDictionary)
+        return CGImageDestinationFinalize(dest)
     }
 
     /// 再生ヘッドのドラッグ開始（冪等）。再生中なら一時停止し、observer の上書きを止める。
@@ -247,12 +346,34 @@ private struct FilmstripTrimmer: View {
     /// 再生ヘッドのドラッグ開始（冪等）／終了。スクラブ中の一時停止・observer 抑制を親に伝える。
     var onScrubBegan: () -> Void = {}
     var onScrubEnded: () -> Void = {}
+    /// 再生ヘッド真下のカメラボタンのタップ＝静止画キャプチャ起動。`nil` なら追従トラックを出さない。
+    var onCapture: (() -> Void)? = nil
+    /// キャプチャ書き出し中。ボタンをスピナー表示にして二度押しを止める。
+    var isCapturing: Bool = false
+
+    /// カメラボタンに指が触れている間 true。押下中だけ少し膨らませて手応えを返す
+    /// （指を離すと gesture 終了で自動的に false へ戻り、スプリングでポンと戻る）。
+    @GestureState private var isPressingCapture = false
 
     private let handleWidth: CGFloat = 14
     /// ハンドルの透明ヒット域（見た目より広く取り、スクラブ面より確実に掴めるようにする）。
     private let handleHitWidth: CGFloat = 34
+    private let stripHeight: CGFloat = 56
+    /// キャプチャボタン（キャレット6＋丸34＝40）にぴったりの高さ。下の余白を抑える。
+    private let captureTrackHeight: CGFloat = 40
 
     var body: some View {
+        VStack(spacing: 4) {
+            filmstripBar
+                .frame(height: stripHeight)
+            if onCapture != nil {
+                captureTrack
+            }
+        }
+    }
+
+    /// サムネ＋両端ハンドル＋再生ヘッドの本体バー（高さ固定）。
+    private var filmstripBar: some View {
         GeometryReader { geo in
             let width = geo.size.width
             let height = geo.size.height
@@ -296,6 +417,53 @@ private struct FilmstripTrimmer: View {
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .coordinateSpace(name: "strip")
         }
+    }
+
+    /// 再生ヘッドの真下に追従するカメラボタン（上向きキャレットで「この位置を撮る」を示す）。
+    /// x マッピングはストリップと同一（全幅・同 `handleWidth`）なのでヘッド直下に揃う。
+    /// 端ではボタンが見切れぬよう、ボタン中心を半径ぶんクランプする。
+    private var captureTrack: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let usable = max(width - handleWidth * 2, 1)
+            let headX = handleWidth + xOffset(for: playhead, usable: usable)
+            let radius: CGFloat = 17
+            let cx = min(max(headX, radius), width - radius)
+            CaptureHeadButton(isCapturing: isCapturing)
+                .scaleEffect(isPressingCapture ? 1.14 : 1.0)   // 押下中は少し膨張（手応え）
+                .animation(.spring(response: 0.26, dampingFraction: 0.55), value: isPressingCapture)
+                .padding(.horizontal, 8)             // ドラッグしやすいよう左右の当たり判定を広げる
+                .contentShape(Rectangle())
+                .position(x: cx, y: 20)
+                .gesture(captureGesture(usable: usable))
+                .accessibilityElement()
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("この瞬間を画像で保存")
+                .accessibilityHint("再生ヘッドの位置の画面を画像として共有します。左右ドラッグで位置調整。")
+                .accessibilityAction { onCapture?() }
+        }
+        .frame(height: captureTrackHeight)
+        .coordinateSpace(name: "captureTrack")
+        .disabled(duration == 0)
+    }
+
+    /// カメラボタンの操作。横ドラッグ＝再生位置の調整（スクラブ）、ほぼ動かさず離す＝タップ＝キャプチャ。
+    /// 再生ヘッドのグラブ（`playheadGrab`）と同じ秒換算で、選択範囲内へクランプする。
+    private func captureGesture(usable: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named("captureTrack"))
+            .updating($isPressingCapture) { _, pressing, _ in pressing = true }
+            .onChanged { value in
+                // 微小なブレはタップ判定に残すため、少し動いてからスクラブを始める。
+                guard abs(value.translation.width) > 3 else { return }
+                onScrubBegan()
+                let seconds = secondsForX(value.location.x - handleWidth, usable: usable)
+                onScrub(clampToSelection(seconds))
+            }
+            .onEnded { value in
+                let isTap = abs(value.translation.width) <= 3 && abs(value.translation.height) <= 3
+                onScrubEnded()
+                if isTap { onCapture?() }
+            }
     }
 
     /// 高さを明示しオーバーフローさせない（縛らないと .fill が縦に溢れて下の UI に被る）。
@@ -412,6 +580,48 @@ private struct FilmstripTrimmer: View {
     private func secondsForX(_ x: CGFloat, usable: CGFloat) -> Double {
         guard usable > 0 else { return 0 }
         return Double(x / usable) * duration
+    }
+}
+
+/// 再生ヘッド直下に置くキャプチャボタンの見た目（上向きキャレット＋カメラ丸ボタン）。
+/// アウトライン（背景色で塗り＋アクション色の枠）で、塗りの再生ボタンと役割を分ける。
+/// 操作（タップ＝キャプチャ／横ドラッグ＝スクラブ）は親の `captureTrack` 側でまとめて扱う。
+private struct CaptureHeadButton: View {
+    let isCapturing: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            CaretUp()
+                .fill(FlashbackColor.action)
+                .frame(width: 12, height: 6)
+            ZStack {
+                Circle()
+                    .fill(FlashbackColor.background)
+                    .overlay(Circle().stroke(FlashbackColor.action, lineWidth: 1.5))
+                if isCapturing {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .tint(FlashbackColor.action)
+                } else {
+                    Image(systemName: "camera")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(FlashbackColor.action)
+                }
+            }
+            .frame(width: 34, height: 34)
+        }
+    }
+}
+
+/// 上向き三角（キャレット）。再生ヘッドの方向を指す目印。
+private struct CaretUp: Shape {
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        p.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        p.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        p.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        p.closeSubpath()
+        return p
     }
 }
 #endif
