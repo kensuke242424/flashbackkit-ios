@@ -141,12 +141,12 @@ struct VideoTrimmerView: View {
         player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
         duration = seconds
         if selection.lowerBound >= selection.upperBound {
-            // 初回（未設定）: 選択を「中間点〜終端」にする。直前の不具合は録画の終盤に写りがちなので、
-            // 取得したい終わり付近をすぐ触れるよう既定の始点を中間へ寄せる（最低選択長は確保）。
-            // 再生ヘッド／プレビューも始点へ寄せ、キャプチャボタンも中央スタートに。
+            // 初回（未設定）: 選択を「中間点〜終端」にする（最低選択長は確保）。
+            // 再生ヘッド／プレビュー／カメラボタンは**録画の最後尾（最新の画面）**へ置く。最新フレームが
+            // そこなので「今の画面をそのままスクショ」がすぐできる。
             let start = max(0, min(seconds / 2, seconds - minimumDuration))
             selection = start...seconds
-            seek(to: start)
+            seek(to: seconds)
         } else {
             // 再ロード（設定へ push して戻る等で .task が再実行）: 選択は維持。replaceCurrentItem で
             // 0 に戻った再生位置を直前のヘッド位置（選択範囲内へクランプ）へ復帰させる。これをしないと
@@ -223,7 +223,9 @@ struct VideoTrimmerView: View {
         }
         playCaptureFeedback()   // 触覚＋プレビュー白フラッシュ（押した瞬間に「撮った感」を返す）
         isCapturingStill = true
-        let seconds = min(max(playhead, 0), duration)
+        // 末尾ぴったり（duration）だと誤差0の generator がそのコマを取り損ねる（duration には表示中の
+        // フレームが無い）ので、僅かに内側へ寄せる。最後尾既定でも最新フレームを確実に取れる。
+        let seconds = min(max(playhead, 0), max(duration - 0.05, 0))
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         let sourceURL = url
         let title = currentTitle()
