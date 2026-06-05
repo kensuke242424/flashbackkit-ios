@@ -64,6 +64,12 @@ final class FloatingButtonTrigger: TriggerDetecting {
         button?.recordingEnabled = enabled
     }
 
+    /// ホストの可視タブバー高さ（被り回避用インセット）を外部（トースト位置調整）へ共有する。
+    /// 実体は `FloatingButtonView` の判定（FAB と同じロジックを使い回す）。
+    static func hostTabBarInset(in container: UIView) -> CGFloat {
+        FloatingButtonView.hostTabBarInset(in: container)
+    }
+
     func stop() {
         button?.onTrigger = nil
         button?.onPressStart = nil
@@ -746,7 +752,8 @@ private final class FloatingButtonView: UIView {
     /// ホストアプリに**今表示中のタブバー**があれば、被り回避に下端へ足すインセットを返す（無ければ 0）。
     /// SDK overlay は別ウィンドウのため safeArea にタブバーが含まれない。タブバー高さには下 safe area が
     /// 含まれるので、その分は二重計上しない。標準 `UITabBar` / SwiftUI `TabView` が対象（自作バーは非対象）。
-    private static func hostTabBarInset(in container: UIView) -> CGFloat {
+    /// FAB だけでなくトースト位置の調整にも流用するため internal。
+    static func hostTabBarInset(in container: UIView) -> CGFloat {
         let overlay = container.window
         let scene = overlay?.windowScene
             ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first

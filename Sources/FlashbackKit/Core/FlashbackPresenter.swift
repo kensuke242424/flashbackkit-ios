@@ -27,6 +27,8 @@ final class FlashbackPresenter {
     private var reportSheetDelegate: ReportSheetDelegate?
     /// info トーストの自動消去用の世代カウンタ（古いタイマーが新しいトーストを消さないように）。
     private var infoToastGeneration = 0
+    /// トーストの下端制約（ホストのタブバー高さに応じて表示時に更新する）。
+    private var toastBottomConstraint: NSLayoutConstraint?
 
     /// install() が（アクティブシーン未接続で）保留され、後からシーン接続で実際に設置できた時に
     /// 一度だけ呼ぶフック。`triggerHost` 依存の後段（FAB など）をコントローラ側が再設置するために使う。
@@ -206,11 +208,13 @@ final class FlashbackPresenter {
 
     /// 進行中トースト（オレンジのスピナー）。書き出し中に出す。例:「記憶を辿っています…」。
     func showProgress(_ message: String) {
+        positionToastAboveHostTabBar()
         model.toast = .progress(message)
     }
 
     /// 失敗トースト（赤アイコン＋青「再試行」）。自動では閉じない。
     func showFailure(_ message: String, onRetry: @escaping () -> Void) {
+        positionToastAboveHostTabBar()
         model.toast = .failure(message: message, onRetry: onRetry)
     }
 
@@ -219,6 +223,7 @@ final class FlashbackPresenter {
     /// 世代カウンタで「この自動消去が出した info をまだ表示中の時だけ」消し、
     /// 後から別トースト（進行中など）が乗った場合は誤って消さない。
     func showInfo(_ message: String, duration: TimeInterval = 1.8) {
+        positionToastAboveHostTabBar()
         infoToastGeneration += 1
         let generation = infoToastGeneration
         model.toast = .info(message)
@@ -273,13 +278,26 @@ final class FlashbackPresenter {
         root.addChild(overlay)
         root.view.addSubview(overlay.view)
         let guide = root.view.safeAreaLayoutGuide
+        // 下端から基準 36pt 上。ホストにタブバーがあれば表示時にその分さらに持ち上げる（下記）。
+        let bottom = overlay.view.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -Self.toastBaseBottomMargin)
+        toastBottomConstraint = bottom
         NSLayoutConstraint.activate([
             overlay.view.centerXAnchor.constraint(equalTo: root.view.centerXAnchor),
-            overlay.view.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -36),
+            bottom,
             overlay.view.leadingAnchor.constraint(greaterThanOrEqualTo: guide.leadingAnchor, constant: 16),
             overlay.view.trailingAnchor.constraint(lessThanOrEqualTo: guide.trailingAnchor, constant: -16),
         ])
         overlay.didMove(toParent: root)
+    }
+
+    private static let toastBaseBottomMargin: CGFloat = 36
+
+    /// トーストがホストのタブバーに被らないよう、表示直前に下オフセットへタブバー高さを加える
+    /// （タブバーが無ければ基準値のまま）。タブバーは別 window なので FAB と同じ検出を流用する。
+    private func positionToastAboveHostTabBar() {
+        guard let container = window?.rootViewController?.view else { return }
+        let inset = FloatingButtonTrigger.hostTabBarInset(in: container)
+        toastBottomConstraint?.constant = -(Self.toastBaseBottomMargin + inset)
     }
 
     /// 提示チェーンの最前面 view controller を辿る。
