@@ -10,7 +10,7 @@ import UIKit
 /// 操作性（録画状態で役割が変わる）:
 /// - 録画オフ（グレー＝寝てる）: **シングルタップで録画オン**（起こす）。初見でも自然に
 ///   当たる導線にするため、寝てる状態は長押しを要求しない。
-/// - 録画オン（オレンジ＝起きてる）: **長押し**（0.5 秒）でレポート起動。押下中はマーク外周に
+/// - 録画オン（オレンジ＝起きてる）: **長押し**（0.4 秒）でレポート起動。押下中はマーク外周に
 ///   プログレスリングが溜まり、袖や手が軽く触れた程度では誤爆しない。短くタップした時は
 ///   無反応で終わらせず「長押しでレポート起動」のヒントを出す。
 /// - **ドラッグ**で位置を移動でき、離すと左右どちらか近い端へ吸着 / タックする。
@@ -137,7 +137,7 @@ private final class FloatingButtonView: UIView {
     private static let edgeMargin: CGFloat = 16
     private static let peek: CGFloat = 22          // タック時に画面端へ残す幅
     private static let tuckThreshold: CGFloat = 24 // この距離以上端へ押し込むとタック
-    private static let pressDuration: CFTimeInterval = 0.5   // 操作感優先で 0.35→0.5（誤爆しにくく）
+    private static let pressDuration: CFTimeInterval = 0.4   // 0.35→0.5（誤爆しにくく）→0.4（やや短く・操作感優先）
     private static let pressScale: CGFloat = 1.14            // 長押しゲージ満了時の膨張（手応え強化で 1.06→1.14）
     private let idleAlpha: CGFloat = 0.5   // 待機時の opacity（タック中も同じ）
     private let activeAlpha: CGFloat = 1.0

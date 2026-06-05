@@ -280,7 +280,7 @@ that state so first-time users aren't stuck guessing:
 
 - **Grey (recording off)** → **tap to start recording.** The first time, a short priming
   sheet explains why screen-recording permission is needed, then iOS asks.
-- **Orange (recording on)** → **long-press (0.5s) to open the report.** A short tap shows
+- **Orange (recording on)** → **long-press (0.4s) to open the report.** A short tap shows
   a "long-press to open" hint instead of doing nothing.
 - **Drag** to reposition; it snaps to the nearest edge and can tuck away.
 - VoiceOver: double-tap activates the state-appropriate action (no long-press required).
