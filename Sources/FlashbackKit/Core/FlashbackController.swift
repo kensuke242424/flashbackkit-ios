@@ -315,7 +315,7 @@ final class FlashbackController {
         let age = recorder.debugFrameAge.map { String(format: "%.1f", $0) } ?? "—"
         let marks = recorder.debugInAppMarksCaptured.map { $0 ? "YES" : "no" } ?? "?"
         let sysRec = recorder.debugSystemIsRecording ? "ON" : "off"
-        return "rec=\(recorder.isRecording ? "ON" : "off")  sysRec=\(sysRec)  age=\(age)s  isCaptured=\(recorder.debugScreenIsCaptured ? "YES" : "no")  marks=\(marks)  errs=\(recorder.debugCaptureErrorCount)"
+        return "rec=\(recorder.isRecording ? "ON" : "off")  sysRec=\(sysRec)  age=\(age)s  isCaptured=\(recorder.debugScreenIsCaptured ? "YES" : "no")  marks=\(marks)  errs=\(recorder.debugCaptureErrorCount)\nwake=[\(recorder.debugWakeSnapshot)]"
     }
 
     /// DEBUG 専用: 進行中トーストを表示する（見た目確認用）。

@@ -88,6 +88,12 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(screenCaptureStateChanged),
             name: UIScreen.capturedDidChangeNotification, object: nil)
+        #if DEBUG
+        // 放置→フォアグラウンド復帰の瞬間の録画状態を固定観察するための診断（DEBUG のみ）。
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(debugCaptureWakeSnapshot),
+            name: UIApplication.didBecomeActiveNotification, object: nil)
+        #endif
     }
 
     func startBuffering(seconds: TimeInterval) {
@@ -202,6 +208,15 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     var debugSystemIsRecording: Bool { recorder.isRecording }
     /// DEBUG: capture handler に来たエラー件数。
     var debugCaptureErrorCount: Int { ringHolder.errorSnapshot().count }
+    /// DEBUG: 直近の didBecomeActive（フォアグラウンド復帰）時点の録画状態スナップショット。
+    /// 復帰直後にウォッチドッグが値を書き換える前の「戻ってきた瞬間の状態」を観察するため。
+    private(set) var debugWakeSnapshot = "—"
+
+    /// didBecomeActive で呼ばれ、復帰瞬間の状態を同期的に採取する（ウォッチドッグの非同期補正より前）。
+    @objc private func debugCaptureWakeSnapshot() {
+        let age = ringHolder.secondsSinceLastVideo().map { String(format: "%.1f", $0) } ?? "—"
+        debugWakeSnapshot = "rec=\(captureConfirmed ? "ON" : "off") sysRec=\(recorder.isRecording ? "ON" : "off") age=\(age) errs=\(ringHolder.errorSnapshot().count)"
+    }
     #endif
 
     // MARK: - 外部キャプチャ（OS画面収録/ミラーリング/通話）との競合
