@@ -106,5 +106,14 @@ enum ClipTrimmer {
         let trimmed = String(cleaned.prefix(60))
         return trimmed.isEmpty ? "Flashback" : trimmed
     }
+
+    /// タイトル未入力時のファイル名フォールバック。種別（"video" / "screenshot"）と日時で、
+    /// 何の共有物か一目で分かり、かつ同日複数でも被らないようにする（例: `flashback-video-20260606-153045`）。
+    static func fallbackName(kind: String) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        return "flashback-\(kind)-\(f.string(from: Date()))"
+    }
 }
 #endif

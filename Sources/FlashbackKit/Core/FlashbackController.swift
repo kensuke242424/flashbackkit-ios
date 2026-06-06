@@ -419,7 +419,9 @@ final class FlashbackController {
                 title: title,
                 description: "\(device.displayModel) / \(device.systemName) \(device.systemVersion)"
             )
-            let outputName = title.isEmpty ? nil : ClipTrimmer.sanitizedFileName(title)
+            let outputName = title.isEmpty
+                ? ClipTrimmer.fallbackName(kind: "video")
+                : ClipTrimmer.sanitizedFileName(title)
             return try await ClipTrimmer.trim(
                 clipURL,
                 fromSeconds: range.lowerBound,

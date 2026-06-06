@@ -21,8 +21,10 @@ struct VideoTrimmerView: View {
     /// `nil` ならカメラ（静止画キャプチャ）ボタンを出さない。
     var onCaptureStill: ((URL) -> Void)? = nil
     /// キャプチャ時点のタイトル（レポート入力）を返す。クリップ共有と同様、ファイル名と
-    /// 画像メタデータへ反映する。入力途中の最新値を読むためクロージャで受ける。
+    /// 画像メタデータの title へ反映する。入力途中の最新値を読むためクロージャで受ける。
     var currentTitle: () -> String = { "" }
+    /// 画像メタデータの description に焼く端末情報（クリップ共有の mp4 description と同じ文字列）。
+    var deviceDescription: String = ""
 
     /// これ以上は詰められない最小選択長（秒）。
     private let minimumDuration: Double = 1.0
@@ -229,6 +231,7 @@ struct VideoTrimmerView: View {
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         let sourceURL = url
         let title = currentTitle()
+        let description = deviceDescription
         // VideoTrimmerView は @MainActor なので、この Task も MainActor 隔離を継承する
         // （UIImage/CGImage を隔離跨ぎさせない＝既知の Sendable 罠を踏まない）。
         Task {
@@ -241,7 +244,7 @@ struct VideoTrimmerView: View {
             let fileURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(stillFileName(at: seconds, title: title))
             try? FileManager.default.removeItem(at: fileURL)   // 同名衝突を避ける
-            guard writeTitledPNG(cg, title: title, to: fileURL) else { return }
+            guard writeTitledPNG(cg, title: title, description: description, to: fileURL) else { return }
             onCaptureStill?(fileURL)
         }
     }
@@ -257,28 +260,26 @@ struct VideoTrimmerView: View {
         }
     }
 
-    /// クリップ共有と同じ無害化（`ClipTrimmer.sanitizedFileName`＝空なら "Flashback"）でタイトルを
-    /// ファイル名に反映し、再生位置のタイムコードを添えて一意にする。AirDrop / ファイル.app で
-    /// タイトルがそのまま見えるようにする。
+    /// 共有ファイル名。クリップ共有とタイトル挿入仕様を揃える：
+    /// - タイトル有り: `<無害化タイトル>-<タイムコード>.png`（点なのでどのコマか分かるよう時刻を添える）
+    /// - タイトル空: `flashback-screenshot-<日時>.png`（クリップの `flashback-video-...` と種別だけ違う）
     private func stillFileName(at seconds: Double, title: String) -> String {
+        guard !title.isEmpty else { return "\(ClipTrimmer.fallbackName(kind: "screenshot")).png" }
         let total = Int(seconds.rounded())
         let stamp = String(format: "%dm%02ds", total / 60, total % 60)
         return "\(ClipTrimmer.sanitizedFileName(title))-\(stamp).png"
     }
 
-    /// PNG をタイトル付きで書き出す。タイトルは PNG の tEXt（Title / Description）として埋め込み、
-    /// クリップの mp4 メタデータ焼き込みと役割を揃える（ファイル名が主、メタデータは補助）。
-    private func writeTitledPNG(_ cgImage: CGImage, title: String, to url: URL) -> Bool {
+    /// PNG を title / description 付きで書き出す。クリップの mp4 メタデータと役割を揃える：
+    /// title=タイトル（有る時のみ）／description=端末情報（常時）。PNG の tEXt（iTXt/XMP）へ埋め込む。
+    private func writeTitledPNG(_ cgImage: CGImage, title: String, description: String, to url: URL) -> Bool {
         guard let dest = CGImageDestinationCreateWithURL(
             url as CFURL, UTType.png.identifier as CFString, 1, nil
         ) else { return false }
-        var properties: [CFString: Any] = [:]
-        if !title.isEmpty {
-            properties[kCGImagePropertyPNGDictionary] = [
-                kCGImagePropertyPNGTitle: title,
-                kCGImagePropertyPNGDescription: title,
-            ]
-        }
+        var png: [CFString: Any] = [:]
+        if !title.isEmpty { png[kCGImagePropertyPNGTitle] = title }
+        if !description.isEmpty { png[kCGImagePropertyPNGDescription] = description }
+        let properties: [CFString: Any] = png.isEmpty ? [:] : [kCGImagePropertyPNGDictionary: png]
         CGImageDestinationAddImage(dest, cgImage, properties as CFDictionary)
         return CGImageDestinationFinalize(dest)
     }

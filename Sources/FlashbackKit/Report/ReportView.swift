@@ -68,7 +68,9 @@ struct ReportView: View {
                                 // 再生ヘッド位置のコマを画像化 → クリップ共有と同じ OS 標準シートで共有。
                                 onCaptureStill: { url in shareItem = ShareItem(url: url) },
                                 // スクショのファイル名／メタデータにもタイトルを反映（クリップと同様）。
-                                currentTitle: { title }
+                                currentTitle: { title },
+                                // メタデータ description はクリップ共有と同じ端末情報文字列に揃える。
+                                deviceDescription: "\(device.displayModel) / \(device.systemName) \(device.systemVersion)"
                             )
                             titleField
                         } else if settings.recordingJustEnabled {
