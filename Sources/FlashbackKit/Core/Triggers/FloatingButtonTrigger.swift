@@ -156,6 +156,8 @@ private final class FloatingButtonView: UIView {
     private let handLayer = CAShapeLayer()
     private let hubLayer = CAShapeLayer()
     private let progressLayer = CAShapeLayer()
+    /// タック時に出す方向チェブロン（引き出す向きを示す）。左端タック=▶ / 右端タック=◀。
+    private let chevronLayer = CAShapeLayer()
 
     private var dragStartCenter: CGPoint = .zero
     private var lastRawCenter: CGPoint = .zero
@@ -215,12 +217,19 @@ private final class FloatingButtonView: UIView {
         progressLayer.lineCap = .round
         progressLayer.strokeEnd = 0
         progressLayer.isHidden = true
-        // 順序: リング → くさび → 針 → ハブ → プログレス。
+        chevronLayer.fillColor = UIColor.clear.cgColor
+        chevronLayer.strokeColor = UIColor.white.cgColor
+        chevronLayer.lineCap = .round
+        chevronLayer.lineJoin = .round
+        chevronLayer.lineWidth = 2.6
+        chevronLayer.isHidden = true               // タック時のみ表示（applyAppearance で切替）
+        // 順序: リング → くさび → 針 → ハブ → プログレス → チェブロン。
         layer.addSublayer(ringLayer)
         layer.addSublayer(wedgeLayer)
         layer.addSublayer(handLayer)
         layer.addSublayer(hubLayer)
         layer.addSublayer(progressLayer)
+        layer.addSublayer(chevronLayer)
     }
 
     override func layoutSubviews() {
@@ -256,6 +265,23 @@ private final class FloatingButtonView: UIView {
         progressLayer.path = UIBezierPath(arcCenter: center, radius: progressRadius,
                                           startAngle: -.pi / 2, endAngle: -.pi / 2 - 2 * .pi,
                                           clockwise: false).cgPath
+
+        // タック時の方向チェブロン。見えている側（peek 領域）に置き、引き出す向きを指す。
+        // 左端タック（tuckedAtMaxX=false）=右側が見える→▶（右へ引き出す）／右端タック=左側が見える→◀。
+        let peekHalf = Self.peek / 2
+        let cx = tuckedAtMaxX ? peekHalf : bounds.width - peekHalf
+        let cw: CGFloat = 5, ch: CGFloat = 11
+        let chevron = UIBezierPath()
+        if tuckedAtMaxX {                                     // ◀（左へ引き出す）
+            chevron.move(to: CGPoint(x: cx + cw / 2, y: center.y - ch / 2))
+            chevron.addLine(to: CGPoint(x: cx - cw / 2, y: center.y))
+            chevron.addLine(to: CGPoint(x: cx + cw / 2, y: center.y + ch / 2))
+        } else {                                             // ▶（右へ引き出す）
+            chevron.move(to: CGPoint(x: cx - cw / 2, y: center.y - ch / 2))
+            chevron.addLine(to: CGPoint(x: cx + cw / 2, y: center.y))
+            chevron.addLine(to: CGPoint(x: cx - cw / 2, y: center.y + ch / 2))
+        }
+        chevronLayer.path = chevron.cgPath
     }
 
     /// 背景色・くさびを**録画状態だけ**で決める（タックは色に影響しない）。アニメ無しの即時スナップ。
@@ -267,7 +293,14 @@ private final class FloatingButtonView: UIView {
         backgroundColor = recordingEnabled ? Self.action : Self.slate
         wedgeLayer.fillColor = UIColor.white.withAlphaComponent(0.5).cgColor
         wedgeLayer.path = wedgePath(sweep: recordingEnabled ? 1 : 0)
+        // タック時はマーク（リング/くさび/針/ハブ）を隠して方向チェブロンを出す。色（半ピル）は維持。
+        ringLayer.isHidden = isTucked
+        wedgeLayer.isHidden = isTucked
+        handLayer.isHidden = isTucked
+        hubLayer.isHidden = isTucked
+        chevronLayer.isHidden = !isTucked
         CATransaction.commit()
+        setNeedsLayout()                            // チェブロンの位置/向きを tuck 状態で引き直す
         if !isTucked {
             accessibilityHint = recordingEnabled ? "長押しでレポートを起動" : "タップで録画を開始"
         }
