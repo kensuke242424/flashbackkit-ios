@@ -574,10 +574,10 @@ private final class FloatingButtonView: UIView {
     @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
         switch recognizer.state {
         case .began:
-            // タック中なら発火せず引き出すだけ。
-            if isTucked {
-                if let parent = superview { unTuck(in: parent) }
-                return
+            // タック中でも、長押しは引き出し（解除）からそのままレポート起動まで通す
+            // （`return` せず下の発火処理へ続ける）。タップ/ドラッグでの引き出しは従来どおり。
+            if isTucked, let parent = superview {
+                unTuck(in: parent)
             }
             didFire = true                     // 発火確定。touchesEnded でキャンセル扱いしない。
             endPressGauge()                    // 満了＝発火。ゲージは満ちて消す（opacity/scale は維持）。
