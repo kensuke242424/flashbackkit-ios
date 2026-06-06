@@ -94,21 +94,14 @@ extension TimeSliceMark {
                       hubColor: FlashbackColor.label)
     }
 
-    /// 録画 OFF（休止 / おやすみ）のマーク。グレーのリング＋中立くさび。
-    /// ReportView の空状態（明るいサーフェス上）では白の薄いくさびが消えるため、
-    /// くさびはグレー @0.55 を使う（README の "Neutral on light surface"）。
+    /// 録画 OFF（休止 / おやすみ）のマーク。グレーのリング＋針＋ハブのみ。
+    /// FAB の OFF 状態（くさびを畳んで非表示）と表現を合わせるため、くさびは出さない
+    /// （`wedgeSweep = 0`＝「録っていない＝スライスが無い」を形で示す）。
     static func dormantOnSurface() -> TimeSliceMark {
         TimeSliceMark(ringColor: FlashbackColor.slate,
                       wedgeColor: FlashbackColor.slate.opacity(0.55),
-                      hubColor: FlashbackColor.slate)
-    }
-
-    /// プライミング（事前説明）のヒーローマーク。まだ録画オフなので Slate 中立。
-    /// くさびは控えめ（@0.45）で「これからオンにする」ニュアンス（正本 priming.jsx 準拠）。
-    static func primingNeutral() -> TimeSliceMark {
-        TimeSliceMark(ringColor: FlashbackColor.slate,
-                      wedgeColor: FlashbackColor.slate.opacity(0.45),
-                      hubColor: FlashbackColor.slate)
+                      hubColor: FlashbackColor.slate,
+                      wedgeSweep: .degrees(0))
     }
 
     /// 録画オン直後（録画中）のマーク。明るいサーフェス上でオレンジ一色。

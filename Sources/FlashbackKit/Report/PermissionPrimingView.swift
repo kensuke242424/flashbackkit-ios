@@ -19,8 +19,8 @@ struct PermissionPrimingView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 8)
 
-            // ヒーロー: Slate 中立の Time Slice マーク（まだ録画オフ）。
-            TimeSliceMark.primingNeutral()
+            // ヒーロー: 録画オン（オレンジ）の Time Slice マーク。これからオンにする状態を先取りで示す。
+            TimeSliceMark.recordingOnSurface()
                 .frame(width: 46, height: 46)
                 .padding(.bottom, 16)
 
