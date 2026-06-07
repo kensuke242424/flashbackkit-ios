@@ -109,7 +109,7 @@ reproduce it?" round-trips.
 ## Installation
 
 > [!NOTE]
-> Latest release: **`0.4.0`** — pre-1.0, so the public API may change before a stable
+> Latest release: **`0.5.0`** — pre-1.0, so the public API may change before a stable
 > 1.0. Pin an exact version if you need stability.
 
 ### Swift Package Manager (Xcode)
@@ -120,13 +120,13 @@ reproduce it?" round-trips.
 https://github.com/kensuke242424/flashbackkit-ios.git
 ```
 
-Set **Dependency Rule = Up to Next Major Version** from `0.4.0` (or pin **Exact** `0.4.0`
+Set **Dependency Rule = Up to Next Major Version** from `0.5.0` (or pin **Exact** `0.5.0`
 while the API is pre-1.0).
 
 ### Package.swift
 
 ```swift
-.package(url: "https://github.com/kensuke242424/flashbackkit-ios.git", from: "0.4.0")
+.package(url: "https://github.com/kensuke242424/flashbackkit-ios.git", from: "0.5.0")
 ```
 
 ```swift
