@@ -304,9 +304,12 @@ struct VideoTrimmerView: View {
                 // スクラブ中は指追従を優先（observer は playhead を上書きしない）。
                 guard !isScrubbing else { return }
                 playhead = seconds
-                // 選択範囲の終端でループ。
+                // 選択範囲の終端で始点へ戻して一時停止（▶表示・1タップで再生し直せる）。
+                // upperBound==duration だと AVPlayer が実終端で自動停止するので pause()/isPlaying も明示で倒す。
                 if isPlaying, seconds >= selection.upperBound {
                     seek(to: selection.lowerBound)
+                    player.pause()
+                    isPlaying = false
                 }
             }
         }
