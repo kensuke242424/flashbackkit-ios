@@ -8,7 +8,7 @@ xcuserdata/
 DerivedData/
 build/
 
-# ローカル署名設定（各自の Team ID。コミットしない）
+# Local signing config (each developer's Team ID; never committed)
 Example/Signing.xcconfig
 
 # Swift Package Manager
@@ -18,7 +18,9 @@ Package.resolved
 
 # Misc
 *.log
-.claude/settings.local.json
 
-# ローカルの進捗メモ（git 管理しない作業用ロードマップ）
+# Claude Code agent tooling (local config / skills)
+.claude/
+
+# Local progress notes (working roadmap; not version-controlled)
 ROADMAP.md

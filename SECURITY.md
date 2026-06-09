@@ -8,7 +8,7 @@ reports seriously and appreciate responsible disclosure.
 
 ## Supported versions
 
-Being pre-1.0, only the **latest `0.1.x` release** receives security fixes. Please
+Being pre-1.0, only the **latest released version** receives security fixes. Please
 reproduce on the latest version before reporting.
 
 ## Reporting a vulnerability
