@@ -1,13 +1,15 @@
 import Foundation
 
-/// ハードウェア識別子（`iPhone16,1` 等）をマーケティング名（"iPhone 15 Pro"）へ引く表。
+/// Table mapping a hardware identifier (e.g. `iPhone16,1`) to a marketing name
+/// ("iPhone 15 Pro").
 ///
-/// Apple は識別子→製品名の公開 API を提供しないため、依存ゼロで人間可読にするには
-/// 静的表を持つしかない。新機種で陳腐化するが、未登録は**生の識別子へフォールバック**
-/// するため壊れない（嘘をつかない）。QA でよく使う近年の iPhone / iPad を収録。
+/// Apple provides no public API for identifier -> product name, so a static table is the
+/// only way to stay human-readable with zero dependencies. It goes stale with new models,
+/// but unknown identifiers **fall back to the raw identifier**, so it never lies. Covers
+/// recent iPhone / iPad models commonly used in QA.
 enum DeviceModelNames {
 
-    /// 識別子に対応するマーケティング名。未登録なら識別子をそのまま返す。
+    /// Marketing name for an identifier; returns the identifier itself if unknown.
     static func name(for identifier: String) -> String {
         table[identifier] ?? identifier
     }

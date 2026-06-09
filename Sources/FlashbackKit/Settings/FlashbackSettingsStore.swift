@@ -1,42 +1,48 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
-/// 設定画面の状態と適用処理を束ねるストア（SDK 内部・ホスト非依存）。
+/// Holds settings-screen state and applies changes (SDK-internal, host-independent).
 ///
-/// `@Published` の変更はそのまま SDK へ適用される（フローティングボタンの表示切替・
-/// 保持秒数の反映）。権限表示はクロージャで最新の可用性を読む。Controller が生成・保持し、
-/// ReportView → SettingsView へ渡す。
+/// `@Published` changes are applied straight to the SDK (FAB visibility, retention
+/// seconds). Permission state is read live via closures. The Controller creates and
+/// owns this, passing it down through ReportView to SettingsView.
 @MainActor
 final class FlashbackSettingsStore: ObservableObject {
-    /// フローティングボタンを表示するか。
+    /// Whether the floating button (FAB) is visible.
     @Published var floatingButtonVisible: Bool {
         didSet { onFloatingButtonVisibleChanged(floatingButtonVisible) }
     }
-    /// 保持する録画秒数（`retentionOptions` のいずれか）。変更は UserDefaults へ永続化し、
-    /// Controller 側で即時反映（ring 差し替え）する＝次回起動でも保たれる。
-    /// init 代入では didSet が走らないため永続化・適用は起きない（promptOnLaunch と同様）。
+    /// Retention seconds (one of `retentionOptions`). Changes are persisted to
+    /// UserDefaults and applied immediately by the Controller (ring swap), so the
+    /// value survives across launches.
+    /// Pitfall: init assignment doesn't trigger didSet, so it neither persists nor
+    /// applies (same as promptOnLaunch).
     @Published var retentionSeconds: Int {
         didSet {
             UserDefaults.standard.set(retentionSeconds, forKey: Self.retentionSecondsKey)
             onRetentionChanged(retentionSeconds)
         }
     }
-    /// 画面録画が利用可能か（= 端末/環境が録画できるか・RPScreenRecorder.isAvailable）。
-    /// 「録画オン/オフ」とは別物（拒否しても true）。CTA の出し分け等の判定に使う。
+    /// Whether screen recording is available (device/environment can record;
+    /// `RPScreenRecorder.isAvailable`). Distinct from recording on/off (stays true even
+    /// when denied). Used to decide whether to show CTAs.
     let isRecordingAvailable: () -> Bool
 
-    /// 実際に録画が走っている（許可確定済み）か。設定画面の「録画中/停止中」表示用。
-    /// Controller が `ScreenRecorder.onRecordingStateChanged` 経由で更新する（@Published＝UI 自動更新）。
-    /// 許可ダイアログ応答前は false（楽観的に true にしない）。
+    /// Whether recording is actually active (permission confirmed). Drives the
+    /// "recording/stopped" indicator in settings. Updated by the Controller via
+    /// `ScreenRecorder.onRecordingStateChanged` (@Published auto-updates the UI).
+    /// False until the permission dialog is answered (no optimistic true).
     @Published var isRecordingActive: Bool
 
-    /// 「録画をオンにする」での再試行が成立した直後か。`true` の間、ReportView の空状態は
-    /// おやすみ（録画オフ）ではなく「録画オン直後（justEnabled）」を表示する。
-    /// 提示のたびに Controller がリセットする（次回の空状態が誤って justEnabled にならないため）。
+    /// Whether a retry via "turn on recording" just succeeded. While `true`, the
+    /// ReportView empty state shows "recording just enabled" instead of the off state.
+    /// The Controller resets it on each presentation so a later empty state isn't
+    /// mistakenly shown as justEnabled.
     @Published var recordingJustEnabled = false
 
-    /// アプリ起動時に画面収録の許可を確認する（起動直後に `startCapture`）か。設定トグルで切替。
-    /// 変更は UserDefaults へ永続化し、Controller 側で即時反映（ON で即バッファ開始）する。
+    /// Whether to prompt for the screen-recording permission on launch (`startCapture`
+    /// right after start). Toggled in settings. Changes are persisted to UserDefaults
+    /// and applied immediately by the Controller (on -> buffering starts at once).
     @Published var promptOnLaunch: Bool {
         didSet {
             UserDefaults.standard.set(promptOnLaunch, forKey: Self.promptOnLaunchKey)
@@ -44,9 +50,10 @@ final class FlashbackSettingsStore: ObservableObject {
         }
     }
 
-    /// 起動ボタン（とトースト）を OS のスクショ/録画から除外するか。既定 true（写さない＝プライバシー優先）。
-    /// 設定トグル「スクリーンショット・録画に写す」はこの値の反転（オン＝写す＝false）。
-    /// 変更は UserDefaults へ永続化し、Controller 側で overlay の除外を即時切替する。
+    /// Whether to exclude the launch button (and toasts) from OS screenshots/recordings.
+    /// Default true (hidden; privacy first). The "show in screenshots/recordings" settings
+    /// toggle is the inverse of this value (on = shown = false). Changes are persisted to
+    /// UserDefaults and the Controller toggles the overlay exclusion immediately.
     @Published var excludesButtonFromCapture: Bool {
         didSet {
             UserDefaults.standard.set(excludesButtonFromCapture, forKey: Self.excludesButtonFromCaptureKey)
@@ -54,26 +61,27 @@ final class FlashbackSettingsStore: ObservableObject {
         }
     }
 
-    /// 画面収録のプライミング（事前説明）を既に一度見せたか（端末1回）。
-    /// `true` 以降は「録画をオンにする」でプライミングを挟まず直接 OS 確認（再試行）へ。
-    /// SDK 副作用を持たない単純フラグなので UserDefaults を直接読み書きする。
+    /// Whether the screen-recording priming was already shown once (once per device).
+    /// Once `true`, "turn on recording" goes straight to the OS prompt (retry) without
+    /// priming. A plain flag with no SDK side effects, so it reads/writes UserDefaults
+    /// directly.
     var hasPrimedScreenRecording: Bool {
         get { UserDefaults.standard.bool(forKey: Self.hasPrimedKey) }
         set { UserDefaults.standard.set(newValue, forKey: Self.hasPrimedKey) }
     }
 
-    /// 「2回シェイクで起動」ヒントを既に一度見せたか（端末1回）。
-    /// フローティングボタンを OFF にした直後に一度だけ提示し、`true` 以降は出さない。
-    /// SDK 副作用を持たない単純フラグなので UserDefaults を直接読み書きする。
+    /// Whether the "shake twice to launch" hint was already shown once (once per device).
+    /// Shown once right after the FAB is turned off, and never again after `true`.
+    /// A plain flag with no SDK side effects, so it reads/writes UserDefaults directly.
     var hasSeenShakeHint: Bool {
         get { UserDefaults.standard.bool(forKey: Self.hasSeenShakeHintKey) }
         set { UserDefaults.standard.set(newValue, forKey: Self.hasSeenShakeHintKey) }
     }
 
-    /// 保持秒数の選択肢。
+    /// Retention-seconds choices.
     static let retentionOptions = [10, 20, 30, 60]
 
-    /// UserDefaults キー（ホストと衝突しないよう接頭辞付き）。
+    /// UserDefaults keys (prefixed to avoid colliding with the host app).
     static let promptOnLaunchKey = "FlashbackKit.promptOnLaunch"
     static let retentionSecondsKey = "FlashbackKit.retentionSeconds"
     static let hasPrimedKey = "FlashbackKit.hasPrimedScreenRecording"
@@ -103,7 +111,7 @@ final class FlashbackSettingsStore: ObservableObject {
     ) {
         self.floatingButtonVisible = floatingButtonVisible
         self.retentionSeconds = retentionSeconds
-        self.promptOnLaunch = promptOnLaunch            // init 代入では didSet は走らない（永続/副作用は起きない）
+        self.promptOnLaunch = promptOnLaunch            // init assignment doesn't trigger didSet (no persist/side effect)
         self.excludesButtonFromCapture = excludesButtonFromCapture
         self.isRecordingActive = isRecordingActive
         self.isRecordingAvailable = isRecordingAvailable
@@ -115,13 +123,14 @@ final class FlashbackSettingsStore: ObservableObject {
         self.onExcludesButtonFromCaptureChanged = onExcludesButtonFromCaptureChanged
     }
 
-    /// 録画（`startCapture`）を再試行する。拒否後の後付け許可 / おやすみ状態の「録画をオンにする」用。
-    /// iOS の仕様上、許可ダイアログはアプリ起動時に出る。再試行で再度出る場合もある（版依存）。
+    /// Retries recording (`startCapture`). Used for granting permission after a denial
+    /// and for "turn on recording" from the off state. On iOS the permission dialog
+    /// appears at app launch; a retry may re-present it (version-dependent).
     func retryRecording() {
         onRetryRecording()
     }
 
-    /// 録画を停止する（ユーザ操作）。再開は「録画を有効にする」/「録画をオンにする」から。
+    /// Stops recording (user action). Resume via "enable recording" / "turn on recording".
     func stopRecording() {
         onStopRecording()
     }

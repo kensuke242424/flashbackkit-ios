@@ -3,14 +3,14 @@ import Foundation
 import UIKit
 #endif
 
-/// レポートに添える端末・アプリのスナップショット。
+/// Device and app snapshot attached to a report.
 public struct DeviceInfo: Sendable {
-    /// 汎用機種名（`UIDevice.model`。"iPhone" / "iPad" など）。
+    /// Generic model name (`UIDevice.model`; e.g. "iPhone" / "iPad").
     public let model: String
-    /// ハードウェア識別子（`iPhone16,1` など）。機種を一意に表す。
-    /// Simulator では `SIMULATOR_MODEL_IDENTIFIER`（実機相当）を返す。
+    /// Hardware model identifier (e.g. `iPhone16,1`), uniquely identifying the model.
+    /// On Simulator, returns `SIMULATOR_MODEL_IDENTIFIER` (the emulated device).
     public let modelIdentifier: String
-    /// マーケティング名（"iPhone 15 Pro" など）。未登録機種では識別子と同値。
+    /// Marketing name (e.g. "iPhone 15 Pro"). Equals the identifier for unknown models.
     public let modelName: String
     public let systemName: String
     public let systemVersion: String
@@ -18,13 +18,13 @@ public struct DeviceInfo: Sendable {
     public let buildNumber: String
     public let locale: String
 
-    /// レポート表示用の機種文字列。`iPhone 15 Pro (iPhone16,1)`。
-    /// 未登録機種（名前＝識別子）は識別子のみ（`iPhone18,1`）。
+    /// Model string for report display, e.g. `iPhone 15 Pro (iPhone16,1)`.
+    /// For unknown models (name == identifier), the identifier alone (e.g. `iPhone18,1`).
     public var displayModel: String {
         modelName == modelIdentifier ? modelIdentifier : "\(modelName) (\(modelIdentifier))"
     }
 
-    /// 現在の端末・アプリ情報を採取する。`UIDevice.current` 参照のため `@MainActor`。
+    /// Collects current device and app info. `@MainActor` because it reads `UIDevice.current`.
     @MainActor
     public static func current() -> DeviceInfo {
         let bundle = Bundle.main
@@ -51,8 +51,7 @@ public struct DeviceInfo: Sendable {
         )
     }
 
-    /// `uname(2)` の `machine` から機種識別子を読む。マーケティング名への変換表は
-    /// 新機種で陳腐化するメンテ負債になるため持たず、一意な生の識別子をそのまま使う。
+    /// Reads the model identifier from `uname(2)`'s `machine`.
     private static func machineIdentifier() -> String {
         #if targetEnvironment(simulator)
         if let identifier = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"],

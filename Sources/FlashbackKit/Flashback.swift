@@ -5,21 +5,23 @@ import Foundation
 /// > Recall the moment before the bug.
 public enum Flashback {
 
-    /// FlashbackKit を起動する。
-    /// バッファ録画を開始し、有効なトリガ（既定: シェイク / フローティングボタン）で
-    /// レポート UI を出す。`configuration.triggers` で手段を絞れる。
+    /// Start FlashbackKit.
+    /// Begins buffer recording and presents the report UI on any enabled trigger
+    /// (default: shake / floating button). Narrow the means via `configuration.triggers`.
     ///
-    /// アプリ起動直後（SwiftUI `App.init` / `AppDelegate.didFinishLaunching` /
-    /// `SceneDelegate.scene(_:willConnectTo:)` / ルートビューの `.onAppear` のいずれか）で
-    /// 一度だけ呼ぶ。SceneDelegate 採用アプリでシーン接続前（`didFinishLaunching`）に呼んでも、
-    /// SDK 内部でシーン接続を待って overlay window を自動設置するため、呼び出しタイミングに
-    /// 依存せず動作する。
+    /// Call once at app launch (in any of SwiftUI `App.init`,
+    /// `AppDelegate.didFinishLaunching`, `SceneDelegate.scene(_:willConnectTo:)`, or the
+    /// root view's `.onAppear`). Even when called before scene connection
+    /// (`didFinishLaunching`) in a SceneDelegate-based app, the SDK waits for scene
+    /// connection and installs the overlay window automatically, so it works regardless of
+    /// call timing.
     ///
-    /// - Parameter onReport: 録画→トリム→共有まで終えた成果物 `FlashbackReport`
-    ///   （タイトル・端末情報・クリップ URL）をホストへ手渡すコールバック（唯一の拡張点）。
-    ///   AI 要約・Slack 送信・自社バックエンド送信などホスト固有の処理はここで行う
-    ///   （SDK の役割は成果物を渡すところまで）。MainActor で呼ばれる。
-    ///   注意: `report.clipURL` は一時ファイル。残すならこの中でコピー/アップロードすること。
+    /// - Parameter onReport: Callback handing the finished `FlashbackReport`
+    ///   (title, device info, clip URL) to the host after recording, trimming, and sharing —
+    ///   the sole extension point. Host-specific work such as AI summarization, Slack
+    ///   delivery, or sending to your own backend goes here (the SDK's job ends at delivering
+    ///   the report). Called on the MainActor.
+    ///   Note: `report.clipURL` is a temporary file; copy or upload it here if you need to keep it.
     @MainActor
     public static func start(
         configuration: FlashbackConfiguration = .init(),
@@ -28,7 +30,7 @@ public enum Flashback {
         FlashbackController.shared.start(configuration: configuration, onReport: onReport)
     }
 
-    /// 録画とリスナーを停止する。
+    /// Stop recording and listeners.
     @MainActor
     public static func stop() {
         FlashbackController.shared.stop()

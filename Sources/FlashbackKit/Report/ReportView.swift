@@ -3,51 +3,53 @@ import SwiftUI
 import UIKit
 import AVFoundation
 
-/// レポート入力 UI（"Quiet" 確定デザイン・フルスクリーン）。
+/// Report input UI ("Quiet" design, full screen).
 ///
-/// 直前クリップのプレビュー＋トリミング・タイトル・端末情報を確認し、右上の
-/// **共有（↑）ひとつ**で OS 標準シート（写真 / ファイル / AirDrop / 他アプリ）へ渡す。
-/// 出口は共有か ✕（キャンセル）のみ。完了ボタン・送信ボタン・成功トーストは持たない。
+/// Lets the user review the recent clip preview with trimming, title, and device
+/// info, then hand it off to the OS share sheet (Photos / Files / AirDrop / other
+/// apps) via the single **share (↑)** button in the top right. The only exits are
+/// share or ✕ (cancel); there is no done/send button or success toast.
 ///
-/// クリップが無い場合は3つの空状態を出し分ける（いずれも成果物を確定しない＝onReport を発火しない）:
-/// - **おやすみ（dormant）**: 録画オフだが端末は録画可能（`isRecordingAvailable()==true`）。
-///   「録画はオフです」＋「録画をオンにする」（再試行 CTA）を出す。
-/// - **録画オン直後（justEnabled）**: 上の CTA が成立した直後。オレンジ録画中マーク＋
-///   「録画をオンにしました / ● 録画中」（CTA なし・この回はまだクリップ無し）。
-/// - **利用不可（unavailable）**: 端末/環境が録画非対応（`isRecordingAvailable()==false`・
-///   Simulator / 非対応端末 / ミラーリング中）。「この端末では画面収録を利用できません」と案内のみ
-///   （押しても成立しないため CTA は出さない）。
+/// When there is no clip, one of three empty states is shown (none of which commit
+/// an artifact, i.e. `onReport` is not fired):
+/// - **dormant**: recording is off but the device can record (`isRecordingAvailable() == true`).
+///   Shows "recording is off" plus an "enable recording" retry CTA.
+/// - **just-enabled**: the moment the dormant CTA succeeds. Orange recording mark plus
+///   "recording enabled / ● recording" (no CTA; still no clip this time around).
+/// - **unavailable**: the device/environment can't record (`isRecordingAvailable() == false`:
+///   Simulator, unsupported device, mirroring). Shows an informational notice only;
+///   no CTA, since tapping it would never succeed.
 ///
-/// 本ファイルは Presenter（UIKit + SwiftUI 環境）からのみ使われるため UIKit/AVFoundation を前提にする。
+/// Only used by the Presenter (UIKit + SwiftUI context), so UIKit/AVFoundation are assumed.
 struct ReportView: View {
-    /// 直前クリップ。nil なら「おやすみ（録画オフ）」状態を表示する。
+    /// Recent clip. `nil` shows the dormant (recording off) state.
     let clipURL: URL?
-    /// レポートに同梱される端末情報（QA が確認できるよう表示する）。
-    /// `DeviceInfo.current()` は `@MainActor` なので呼び出し側（Presenter）で採取して渡す。
+    /// Device info bundled into the report, displayed for QA to verify.
+    /// `DeviceInfo.current()` is `@MainActor`, so the caller (Presenter) collects and passes it in.
     let device: DeviceInfo
-    /// 共有: 選択範囲を切り出し→commit し、共有シート用の最終クリップ URL を返す。
+    /// Share: trim the selected range, commit it, and return the final clip URL for the share sheet.
     let onShare: (String, ClosedRange<Double>?) async -> URL?
-    /// キャンセル（✕）。
+    /// Cancel (✕).
     let onCancel: () -> Void
-    /// シートを `.large` へ展開する要求（ハーフでは窮屈な設定 push の前に呼ぶ）。
+    /// Request to expand the sheet to `.large` (call before pushing settings, which is cramped at half).
     let onRequestExpand: () -> Void
-    /// 設定画面のストア（歯車 / おやすみ状態の「録画をオンにする」から push）。
+    /// Settings store (pushed from the gear or the dormant-state "enable recording" CTA).
     @ObservedObject var settings: FlashbackSettingsStore
-    /// ハーフモーダルの展開状態（`.large` で動画プレビューを拡大する）。
+    /// Half-modal expansion state (`.large` enlarges the video preview).
     @ObservedObject var detent: SheetDetentModel
 
     @State private var title = ""
-    /// 選択範囲（秒）。`0...0` は未確定で、トリマーが尺確定後に全体へ広げる。
+    /// Selected range (seconds). `0...0` is uncommitted; the trimmer widens it to the full clip once the duration is known.
     @State private var selection: ClosedRange<Double> = 0...0
     @State private var shareItem: ShareItem?
     @State private var isWorking = false
     @State private var showingSettings = false
     @State private var showingPriming = false
-    /// タイトル入力のフォーカス状態（フォーカス時に環境情報をキーボードの上へスクロールする）。
+    /// Title field focus state (when focused, the device info scrolls above the keyboard).
     @FocusState private var titleFocused: Bool
 
     private var hasClip: Bool { clipURL != nil }
-    /// `ScrollViewReader` 用: 環境情報セクションのスクロールアンカー ID。
+    /// Scroll anchor ID for the device info section, used with `ScrollViewReader`.
     private static let deviceInfoAnchor = "fb.deviceInfo"
 
     var body: some View {
@@ -56,29 +58,29 @@ struct ReportView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if let clipURL {
-                            // ハーフ（.medium）は動画を主役に大きく（クリップバーが隠れない上限 ~220）。
-                            // 展開（.large）はシート下部に余白が余りがちなので、動画をさらに大きくして埋める。
+                            // At half (.medium) the video is the focus (capped ~220 so the clip bar stays visible).
+                            // When expanded (.large) the sheet tends to have spare space at the bottom, so the video grows to fill it.
                             VideoTrimmerView(
                                 url: clipURL,
-                                // ハーフは少しだけ控えめ（200）にして、最下部のキャプチャボタンを
-                                // 画面下端のホームインジケータ帯から軽く持ち上げる（OS ジェスチャ競合の保険）。
-                                // 主因は deferring 側で対処済み。ここは録画 View を潰しすぎない範囲に留める。
+                                // Slightly conservative (200) at half so the capture button at the bottom sits a
+                                // little above the home-indicator band (insurance against OS gesture conflicts;
+                                // the main fix is on the deferring side). Keep it from squeezing the recording view too much.
                                 selection: $selection,
                                 previewMaxHeight: detent.isExpanded ? 360 : 200,
-                                // 再生ヘッド位置のコマを画像化 → クリップ共有と同じ OS 標準シートで共有。
+                                // Render the frame at the playhead as an image and share it via the same OS share sheet as the clip.
                                 onCaptureStill: { url in shareItem = ShareItem(url: url) },
-                                // スクショのファイル名／メタデータにもタイトルを反映（クリップと同様）。
+                                // Reflect the title in the still's filename/metadata too (same as the clip).
                                 currentTitle: { title },
-                                // メタデータ description はクリップ共有と同じ端末情報文字列に揃える。
+                                // Keep the metadata description aligned with the clip share's device info string.
                                 deviceDescription: "\(device.displayModel) / \(device.systemName) \(device.systemVersion)"
                             )
                             titleField
                         } else if settings.recordingJustEnabled {
                             justEnabledInvitation
                         } else if settings.isRecordingAvailable() {
-                            dormantInvitation        // 録画オフ（拒否など）。再試行できるので CTA あり。
+                            dormantInvitation        // Recording off (e.g. denied). Retryable, so it has a CTA.
                         } else {
-                            unavailableInvitation    // この端末/環境では録画不可。CTA なし。
+                            unavailableInvitation    // Recording unsupported here. No CTA.
                         }
                         DeviceInfoSection(device: device, insertionTitle: hasClip ? $title : nil)
                             .id(Self.deviceInfoAnchor)
@@ -88,16 +90,16 @@ struct ReportView: View {
                     .animation(.spring(response: 0.35, dampingFraction: 0.85), value: detent.isExpanded)
                 }
                 .scrollDismissesKeyboard(.interactively)
-                // タイトルにフォーカスが当たったら、下にある環境情報をキーボードの上へスクロールで見せる
-                // （位置は変えず、端末情報を見ながらタイトルへ書き写せるように）。下端 inset が確定する
-                // キーボードが動き始める willShow に同期してスクロール（didShow だと出切った後に
-                // 別モーションでガクッと動いてびっくりするため）。キーボードと同じ時間で一緒に滑り上げる。
+                // When the title gains focus, scroll the device info below it up above the keyboard so the user
+                // can copy values into the title while reading them. Sync to `willShow` (when the keyboard starts
+                // moving and the bottom inset is settled) rather than `didShow`, which would jolt with a separate
+                // motion after the keyboard has fully appeared. Slide up in lockstep with the keyboard.
                 .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { note in
                     if titleFocused { scrollDeviceInfoAboveKeyboard(proxy, note: note) }
                 }
             }
             .background(FlashbackColor.background)
-            .navigationTitle("レポート")           // 子（設定）の戻るボタン文言。中央は principal で上書き。
+            .navigationTitle("レポート")           // Back-button label for the child (settings). Center title is overridden via principal.
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar }
             .overlay { workingOverlay }
@@ -105,11 +107,11 @@ struct ReportView: View {
             .sheet(isPresented: $showingPriming) {
                 PermissionPrimingView(
                     onProceed: {
-                        settings.hasPrimedScreenRecording = true   // 端末1回
+                        settings.hasPrimedScreenRecording = true   // Once per device
                         showingPriming = false
-                        settings.retryRecording()                   // → startCapture（OS 確認）→ 成功で justEnabled
+                        settings.retryRecording()                   // → startCapture (OS prompt) → just-enabled on success
                     },
-                    onLater: { showingPriming = false }             // おやすみへ戻る（トースト無し）
+                    onLater: { showingPriming = false }             // Back to dormant (no toast)
                 )
                 .presentationDetents([.medium])
             }
@@ -117,15 +119,15 @@ struct ReportView: View {
                 SettingsView(store: settings)
             }
         }
-        .tint(FlashbackColor.action)   // ✕ / 共有 / 歯車 / コントロールをオレンジに。
+        .tint(FlashbackColor.action)   // ✕ / share / gear / controls in orange.
     }
 
-    // MARK: - ナビゲーションバー
+    // MARK: - Navigation bar
 
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            Text("Flashback")                       // ブランド名は英語のまま。中央・label 色。
+            Text("Flashback")                       // Brand name stays English. Centered, label color.
                 .font(FlashbackFont.navTitle)
                 .foregroundStyle(FlashbackColor.label)
         }
@@ -134,7 +136,7 @@ struct ReportView: View {
                 .accessibilityLabel("キャンセル")
                 .disabled(isWorking)
         }
-        // 右グループ: 共有（クリップがある時のみ）→ 歯車（常時）。
+        // Right group: share (only when a clip exists) → gear (always).
         ToolbarItemGroup(placement: .primaryAction) {
             if hasClip {
                 Button(action: share) { Image(systemName: "square.and.arrow.up") }
@@ -142,7 +144,7 @@ struct ReportView: View {
                     .disabled(isWorking)
             }
             Button {
-                onRequestExpand()        // 設定はハーフだと窮屈なので large へ広げてから push。
+                onRequestExpand()        // Settings is cramped at half, so expand to large before pushing.
                 showingSettings = true
             } label: { Image(systemName: "gearshape") }
                 .accessibilityLabel("設定")
@@ -150,7 +152,7 @@ struct ReportView: View {
         }
     }
 
-    // MARK: - タイトル（クリップがある時のみ）
+    // MARK: - Title (only when a clip exists)
 
     private var titleField: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -176,11 +178,11 @@ struct ReportView: View {
         }
     }
 
-    // MARK: - おやすみ（録画オフ）状態
+    // MARK: - Dormant (recording off) state
 
     private var dormantInvitation: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // 破線プレースホルダ箱: 休止マーク＋「録画はオフです」。
+            // Dashed placeholder box: dormant mark plus "recording is off".
             placeholderBox {
                 TimeSliceMark.dormantOnSurface()
                     .frame(width: 40, height: 40)
@@ -189,13 +191,13 @@ struct ReportView: View {
                     .foregroundStyle(FlashbackColor.secondaryLabel)
             }
 
-            // 中立コピー（QA 特有の「不具合」表現は避ける・README コピー注記準拠）。
+            // Neutral copy (avoids QA-specific "bug" wording; per README copy notes).
             Text("オンにすると、直前の操作の録画を自動で保持します。")
                 .font(FlashbackFont.body)
                 .foregroundStyle(FlashbackColor.secondaryLabel)
                 .fixedSize(horizontal: false, vertical: true)
 
-            // 録画をオンにする（橙）。初回はプライミングを挟み、以降は直接 OS 確認（再試行）へ。
+            // Enable recording (orange). First time goes through priming; afterward straight to the OS prompt (retry).
             Button(action: enableRecordingTapped) {
                 HStack(spacing: 8) {
                     Image(systemName: "record.circle")
@@ -208,15 +210,15 @@ struct ReportView: View {
         }
     }
 
-    // MARK: - 録画不可（Simulator / 非対応環境）状態
+    // MARK: - Unavailable (Simulator / unsupported environment) state
 
-    /// 端末/環境が画面収録に対応していない（`isRecordingAvailable() == false`）時の空状態。
-    /// 「録画をオンにする」を押しても成立しないため **CTA は出さない**（案内のみ）。
-    /// Simulator・非対応端末・ミラーリング中などが該当する。
+    /// Empty state when the device/environment can't record (`isRecordingAvailable() == false`).
+    /// Shows an informational notice only and **no CTA**, since "enable recording" would never succeed.
+    /// Applies to the Simulator, unsupported devices, mirroring, etc.
     private var unavailableInvitation: some View {
         VStack(alignment: .leading, spacing: 16) {
             placeholderBox {
-                TimeSliceMark.dormantOnSurface()           // グレー休止マーク
+                TimeSliceMark.dormantOnSurface()           // Gray dormant mark
                     .frame(width: 40, height: 40)
                 Text("この端末では画面収録を利用できません")
                     .font(FlashbackFont.body)
@@ -226,7 +228,7 @@ struct ReportView: View {
                     .padding(.horizontal, 24)
             }
 
-            // 中立な補足（なぜ不可か）。CTA は出さない。
+            // Neutral note on why it's unavailable. No CTA.
             Text("Simulator や画面収録に対応していない環境では録画できません。実機でお試しください。")
                 .font(FlashbackFont.body)
                 .foregroundStyle(FlashbackColor.secondaryLabel)
@@ -234,14 +236,14 @@ struct ReportView: View {
         }
     }
 
-    // MARK: - 録画オン直後（justEnabled）状態
+    // MARK: - Just-enabled (recording on) state
 
-    /// おやすみで「録画をオンにする」が成立した直後の継続状態。マークがグレー休止 →
-    /// オレンジ録画中へ変わり、「録画をオンにしました」＋「● 録画中」を示す。今回はまだ
-    /// クリップが無いため共有・タイトルは無く、✕ で閉じる（歯車は残る）。CTA も無い。
+    /// Continuation state right after the dormant "enable recording" CTA succeeds. The mark switches
+    /// from gray dormant to orange recording, showing "recording enabled" plus a "● recording" pill.
+    /// There's still no clip this time, so no share/title; exit via ✕ (the gear stays). No CTA.
     private var justEnabledInvitation: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // 破線プレースホルダ箱: 録画中マーク（オレンジ）＋肯定見出し＋「● 録画中」ピル。
+            // Dashed placeholder box: recording mark (orange) + affirmative heading + "● recording" pill.
             placeholderBox {
                 TimeSliceMark.recordingOnSurface()
                     .frame(width: 40, height: 40)
@@ -251,7 +253,7 @@ struct ReportView: View {
                 recordingPill
             }
 
-            // この回はクリップ無し＝「次回から」を伝える中立コピー。
+            // No clip this time, so neutral copy conveying "from next time on".
             Text("次回の起動操作から、直前の操作を自動で保持します。")
                 .font(FlashbackFont.body)
                 .foregroundStyle(FlashbackColor.secondaryLabel)
@@ -259,7 +261,7 @@ struct ReportView: View {
         }
     }
 
-    /// 「● 録画中」ステータスピル（オレンジ点＋オレンジ文字 / 薄いオレンジ tint 背景）。
+    /// "● recording" status pill (orange dot + orange text on a faint orange tint background).
     private var recordingPill: some View {
         HStack(spacing: 5) {
             Circle()
@@ -276,7 +278,7 @@ struct ReportView: View {
         .accessibilityLabel("録画中")
     }
 
-    /// おやすみ / 録画オン直後で共通の破線プレースホルダ箱（角丸12・破線枠）。
+    /// Dashed placeholder box shared by the dormant and just-enabled states (corner radius 12, dashed border).
     private func placeholderBox<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         VStack(spacing: 12, content: content)
             .frame(maxWidth: .infinity)
@@ -290,30 +292,31 @@ struct ReportView: View {
             )
     }
 
-    // MARK: - 作業中オーバーレイ（共有の書き出し中）
+    // MARK: - Working overlay (during share export)
 
     @ViewBuilder
     private var workingOverlay: some View {
         if isWorking {
             ProgressView()
                 .controlSize(.large)
-                .tint(FlashbackColor.secondaryLabel)   // ローディングは中立グレー（橙=操作可能の継承を打ち消す）。
+                .tint(FlashbackColor.secondaryLabel)   // Neutral gray for loading (cancels the inherited orange = actionable).
                 .padding(24)
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
         }
     }
 
-    // MARK: - アクション
+    // MARK: - Actions
 
-    /// 環境情報セクションをキーボードの上端へスクロールして見せる（タイトル位置は変えない）。
-    /// タイトル＋環境情報はキーボード上の領域に十分収まるため、`.bottom` 寄せでも
-    /// タイトルは上に残る＝端末情報を見ながら入力できる。
-    /// **キーボードと同じアニメ時間＋カーブで動かす**ことで、競り上がりと一体になって滑らかに上がる
-    /// （時間だけ合わせても `.easeOut` はキーボードのカーブより出だしが速く、先走って違和感が出る）。
+    /// Scroll the device info section up to the top of the keyboard (without moving the title).
+    /// Title + device info fit comfortably in the space above the keyboard, so even with `.bottom`
+    /// alignment the title stays visible, letting the user read the device info while typing.
+    /// **Match the keyboard's animation duration and curve** so it rises smoothly together with the
+    /// keyboard (matching only the duration with `.easeOut` starts faster than the keyboard's curve and
+    /// gets ahead of it, which feels off).
     private func scrollDeviceInfoAboveKeyboard(_ proxy: ScrollViewProxy, note: Notification) {
         let info = note.userInfo
         let kbDuration = (info?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        // キーボードより気持ち速く（0.7倍）してキビキビ感を出す（カーブは合わせたまま）。
+        // A touch faster than the keyboard (0.7x) for a snappier feel (curve kept matched).
         let duration = max(kbDuration * 0.7, 0.12)
         let curveRaw = (info?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int) ?? 7
         let animation: Animation
@@ -322,8 +325,8 @@ struct ReportView: View {
         case 2: animation = .easeOut(duration: duration)
         case 3: animation = .linear(duration: duration)
         default:
-            // 0=easeInOut / 7=キーボード既定カーブ。出だしが緩やかな easeInOut 系に寄せて
-            // 競り上がりと速度感を合わせる。
+            // 0 = easeInOut / 7 = keyboard's default curve. Lean toward easeInOut, which starts
+            // gently, to match the keyboard's rise in feel.
             animation = .easeInOut(duration: duration)
         }
         withAnimation(animation) {
@@ -331,7 +334,7 @@ struct ReportView: View {
         }
     }
 
-    /// 「録画をオンにする」: 端末で初回はプライミングを提示、2回目以降は直接 OS 確認（再試行）。
+    /// Enable recording: show priming the first time on the device, go straight to the OS prompt (retry) afterward.
     private func enableRecordingTapped() {
         if settings.hasPrimedScreenRecording {
             settings.retryRecording()
@@ -352,19 +355,18 @@ struct ReportView: View {
     }
 }
 
-/// 端末情報。枠で囲わず、控えめなグレー文字＋SF Mono で補足的に示す（左寄せ・スタック）。
-/// クリップがある時は各行末尾に ＋ ボタンを出し、押すとタイトル末尾の「（…）」へその値を挿入する
-/// （例:「テスト動画」→「テスト動画（iPhone 15 Pro）」→「テスト動画（iPhone 15 Pro/iOS 26.5）」）。
-/// 追加済みの行はボタンが −（除去）へ変わり、押すとその値を取り除く。ボタンはフォーカスを奪わない
-/// ので、タイトル入力中（キーボード表示中）でもそのまま挿入/除去できる。
+/// Device info. Shown supplementally in unboxed, muted gray text with SF Mono (left-aligned stack).
+/// When a clip exists, each row gets a trailing ＋ button that inserts its value into the title's
+/// trailing "｜…｜" segment. Once added, the button becomes − (remove) to take the value back out.
+/// The buttons don't steal focus, so values can be inserted/removed while typing the title (keyboard up).
 private struct DeviceInfoSection: View {
     let device: DeviceInfo
-    /// タイトルへ環境情報を挿入/除去するためのバインディング。nil（クリップ無し）の時は ＋/− を出さない。
+    /// Binding for inserting/removing device info into the title. When nil (no clip), no ＋/− is shown.
     var insertionTitle: Binding<String>? = nil
-    /// タイトルへ追加済みのフィールド（挿入順を保持し、その順で「｜A｜B｜」を組む）。
+    /// Fields already added to the title, in insertion order, used to build "｜A｜B｜".
     @State private var added: [Field] = []
 
-    /// 表示する3項目。
+    /// The three displayed items.
     private enum Field: CaseIterable {
         case model, os, app
         var symbol: String {
@@ -376,7 +378,7 @@ private struct DeviceInfoSection: View {
         }
     }
 
-    /// 行に出す（＝タイトルへ挿入する）値。
+    /// The value shown in the row (and inserted into the title).
     private func value(_ field: Field) -> String {
         switch field {
         case .model: return device.modelName
@@ -390,7 +392,7 @@ private struct DeviceInfoSection: View {
             Text("環境情報")
                 .font(FlashbackFont.caption)
                 .foregroundStyle(FlashbackColor.tertiaryLabel)
-            // 人が読む用途なので識別子は付けない（記録用の displayModel はログ側）。
+            // For human reading, so no identifiers (the record-keeping displayModel lives on the log side).
             ForEach(Field.allCases, id: \.self) { row($0) }
         }
     }
@@ -409,7 +411,7 @@ private struct DeviceInfoSection: View {
         .foregroundStyle(FlashbackColor.secondaryLabel)
     }
 
-    /// ＋（追加）/ −（除去）トグル。押すとタイトル末尾の「｜…｜」を組み直す。
+    /// ＋ (add) / − (remove) toggle. Rebuilds the title's trailing "｜…｜" segment on tap.
     private func insertButton(_ field: Field, title: Binding<String>) -> some View {
         let isAdded = added.contains(field)
         return Button {
@@ -418,15 +420,15 @@ private struct DeviceInfoSection: View {
             Image(systemName: isAdded ? "minus.circle.fill" : "plus.circle")
                 .font(.system(size: 18))
                 .foregroundStyle(FlashbackColor.action)
-                .frame(width: 28, height: 28)        // タップ域を確保
+                .frame(width: 28, height: 28)        // Ensure a tap target
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(isAdded ? "タイトルから\(value(field))を除去" : "タイトルへ\(value(field))を追加")
     }
 
-    /// タイトル末尾の「｜…｜」を一旦剥がして base を復元し、added をトグルして組み直す。
-    /// 末尾が想定の「｜…｜」でない（手編集された）場合は base をそのままにして末尾へ付け直す。
+    /// Strip the title's trailing "｜…｜" to recover the base, toggle `added`, then rebuild.
+    /// If the suffix isn't the expected "｜…｜" (the user hand-edited it), keep the base as-is and reappend.
     private func toggle(_ field: Field, title: Binding<String>) {
         let oldSuffix = suffix(for: added)
         var base = title.wrappedValue
@@ -442,22 +444,22 @@ private struct DeviceInfoSection: View {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
     }
 
-    /// 追加済みフィールドから「｜A｜B｜…｜」を作る（空なら空文字）。
-    /// 両端の括弧は付けず、全ての区切り位置（先頭・各項目間・末尾）に「｜」を置く。
+    /// Build "｜A｜B｜…｜" from the added fields (empty string if none).
+    /// No surrounding brackets; place "｜" at every separator position (leading, between items, trailing).
     private func suffix(for fields: [Field]) -> String {
         guard !fields.isEmpty else { return "" }
         return "｜" + fields.map(value).joined(separator: "｜") + "｜"
     }
 }
 
-/// `.sheet(item:)` で扱うための Identifiable な共有対象。
+/// Identifiable share target for `.sheet(item:)`.
 private struct ShareItem: Identifiable {
     let id = UUID()
     let url: URL
 }
 
-/// `UIActivityViewController`（OS 標準の共有シート）を SwiftUI に橋渡しする。
-/// 端末保存（写真 / ファイル）・AirDrop・他アプリ送信はここから選べる。
+/// Bridges `UIActivityViewController` (the OS share sheet) into SwiftUI.
+/// Saving to device (Photos / Files), AirDrop, and sending to other apps are all available here.
 private struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 

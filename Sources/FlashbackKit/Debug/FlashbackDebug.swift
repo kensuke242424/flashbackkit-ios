@@ -3,11 +3,12 @@ import Foundation
 
 public extension Flashback {
 
-    /// DEBUG 専用: 合成サンプル動画でレポート（プレビュー＋トリミング）UI を即時表示する。
+    /// DEBUG-only: present the report UI (preview + trimming) immediately with a synthetic
+    /// sample clip.
     ///
-    /// ReplayKit 実録画が動かない Simulator でトリミング UX を確認するための入口。
-    /// 事前に `Flashback.start()` を呼んで overlay window が設置されている必要がある。
-    /// Release ビルドには含まれない。
+    /// Debug entry point for checking the trimming UX on the Simulator, where real ReplayKit
+    /// recording doesn't run. Requires `Flashback.start()` to have installed the overlay
+    /// window first. Not included in Release builds.
     @MainActor
     static func debugPresentSampleReport(seconds: Int = 12) {
         Task {
@@ -21,70 +22,73 @@ public extension Flashback {
         }
     }
 
-    /// DEBUG 専用: 「おやすみ（録画オフ）」状態のレポート UI を即時表示する。
+    /// DEBUG-only: present the report UI in the off (recording disabled) state immediately.
     ///
-    /// クリップ無し（Simulator / 録画オフ）時の案内 UI を確認するための入口。
-    /// 事前に `Flashback.start()` を呼んで overlay window が設置されている必要がある。
+    /// Debug entry point for checking the guidance UI when there's no clip (Simulator /
+    /// recording off). Requires `Flashback.start()` to have installed the overlay window.
     @MainActor
     static func debugPresentEmptyReport() {
         FlashbackController.shared.debugPresentReport(clipURL: nil)
     }
 
-    /// DEBUG 専用: 「録画オン直後（justEnabled）」状態のレポート UI を即時表示する。
+    /// DEBUG-only: present the report UI in the "recording just enabled" (justEnabled) state.
     ///
-    /// おやすみ → 「録画をオンにする」成立直後の継続状態（オレンジマーク＋「録画中」）を
-    /// 確認するための入口。事前に `Flashback.start()` で overlay window が必要。
+    /// Debug entry point for checking the follow-up state (orange mark + "recording") right
+    /// after "turn on recording" succeeds from the off state. Requires `Flashback.start()`
+    /// for the overlay window.
     @MainActor
     static func debugPresentRecordingJustEnabled() {
         FlashbackController.shared.debugPresentReportJustEnabled()
     }
 
-    /// DEBUG 専用: 「録画不可（この端末では利用できません）」状態のレポート UI を表示する。
+    /// DEBUG-only: present the report UI in the "recording unavailable" state.
     ///
-    /// Simulator / 非対応端末（`isRecordingAvailable()==false`）時の CTA 非表示の案内 UI を
-    /// 確認するための入口。事前に `Flashback.start()` で overlay window が必要。
+    /// Debug entry point for checking the guidance UI with the CTA hidden on
+    /// Simulator / unsupported devices (`isRecordingAvailable() == false`). Requires
+    /// `Flashback.start()` for the overlay window.
     @MainActor
     static func debugPresentReportUnavailable() {
         FlashbackController.shared.debugPresentReportUnavailable()
     }
 
-    /// DEBUG 専用: 画面収録 許可プライミングのシートを表示する（見た目確認用）。
-    /// 事前に `Flashback.start()` で overlay window が必要。
+    /// DEBUG-only: present the screen-recording permission priming sheet (visual check).
+    /// Requires `Flashback.start()` for the overlay window.
     @MainActor
     static func debugPresentPriming() {
         FlashbackController.shared.debugPresentPriming()
     }
 
-    /// DEBUG 専用: プライミング既読フラグをリセットする（実機で初回フローを再テストする用）。
+    /// DEBUG-only: reset the priming-seen flag (to re-test the first-run flow on a device).
     @MainActor
     static func debugResetPriming() {
         FlashbackController.shared.debugResetPriming()
     }
 
-    /// DEBUG 専用: 「2回シェイクで起動」ヒント（中央アラート風カード）を表示する（見た目確認用）。
+    /// DEBUG-only: present the "shake twice to launch" hint (centered alert-style card)
+    /// (visual check).
     ///
-    /// 本番ではフローティングボタンの表示トグルを OFF にした直後に端末1回だけ自動提示される。
-    /// 事前に `Flashback.start()` で overlay window が必要。
+    /// In production it's shown automatically once per device, right after the FAB
+    /// visibility toggle is turned off. Requires `Flashback.start()` for the overlay window.
     @MainActor
     static func debugPresentShakeHint() {
         FlashbackController.shared.debugPresentShakeHint()
     }
 
-    /// DEBUG 専用: シェイクヒント既読フラグをリセットする（実機で初回提示を再テストする用）。
+    /// DEBUG-only: reset the shake-hint-seen flag (to re-test the first presentation on a device).
     @MainActor
     static func debugResetShakeHint() {
         FlashbackController.shared.debugResetShakeHint()
     }
 
-    /// DEBUG 専用: 録画状態の一行ステータス（rec / フレーム経過秒 / isCaptured / probe）。
-    /// 割り込み検知の挙動を実機で観察するための簡易 HUD 表示に使う。
+    /// DEBUG-only: one-line recording status (rec / frame elapsed seconds / isCaptured / probe).
+    /// Used for a lightweight HUD to observe interruption-detection behavior on a device.
     @MainActor
     static func debugRecordingStatusLine() -> String {
         FlashbackController.shared.debugRecordingStatusLine()
     }
 
-    /// DEBUG 専用: トースト（進行中 / 失敗）を表示する（見た目確認用）。
-    /// - Parameter kind: `"failure"` で失敗トースト、それ以外は進行中トースト。
+    /// DEBUG-only: present a toast (in-progress / failure) (visual check).
+    /// - Parameter kind: `"failure"` for the failure toast, otherwise the in-progress toast.
     @MainActor
     static func debugShowToast(_ kind: String) {
         if kind == "failure" {
@@ -94,7 +98,7 @@ public extension Flashback {
         }
     }
 
-    /// DEBUG 専用: 設定画面を即時表示する（見た目確認用）。
+    /// DEBUG-only: present the settings screen immediately (visual check).
     @MainActor
     static func debugPresentSettings() {
         FlashbackController.shared.debugPresentSettings()

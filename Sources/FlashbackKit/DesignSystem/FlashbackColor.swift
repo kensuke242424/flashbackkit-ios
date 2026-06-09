@@ -2,66 +2,69 @@
 import SwiftUI
 import UIKit
 
-/// FlashbackKit UI のカラートークン（"Quiet" 確定版）。
+/// Color tokens for the FlashbackKit UI.
 ///
-/// 方針（README トークン表準拠）:
-/// - **ブランド2色のみ** Asset Catalog の Color Set（ライト/ダーク両対応）で持つ。
-///   `action`（録画中 / 操作可能 = オレンジ）と `slate`（ブランド中立）。
-/// - それ以外はすべて **semantic system color** に寄せる（ハードコードしない）。
-///   端末のライト/ダーク・コントラスト設定へ自動追従させるため。
-/// - `onAction` だけは system 等価が無く、かつ「ブランド2色」にも含めない約束のため、
-///   ここでコード定義の dynamic color として一元管理する（View に hex を撒かない）。
+/// Policy:
+/// - **Only the two brand colors** live in the Asset Catalog Color Sets (light/dark):
+///   `action` (recording / interactive = orange) and `slate` (brand neutral).
+/// - Everything else maps to **semantic system colors** (never hardcoded) so it follows
+///   the device's light/dark and contrast settings automatically.
+/// - `onAction` is the one exception with no system equivalent, and it's deliberately not
+///   one of the two brand colors, so it's defined here as a single dynamic color (no hex
+///   scattered across views).
 ///
-/// 色の意味づけ（重要）: **オレンジ = 録画中 / 操作可能。グレー = 非録画。**
-/// 設定画面だけは例外で、標準 iOS カラー（青リンク・緑トグル）を使う＝`settingsLink` 等。
+/// Color semantics (important): **orange = recording / interactive; gray = not recording.**
+/// The settings screen is the exception, using standard iOS colors (blue links, green
+/// toggles) via `settingsLink` and friends.
 enum FlashbackColor {
 
-    // MARK: - ブランド（Asset Catalog / ライト・ダーク）
+    // MARK: - Brand (Asset Catalog, light/dark)
 
-    /// アクション / コントロール色（オレンジ）。ロゴのくさび・"Kit"・録画中 FAB・
-    /// ReportView の機能コントロール（再生 / トリム / ✕ / 共有 / 歯車）に使う。
+    /// Action / control color (orange). Used for the logo wedge, "Kit", the recording FAB,
+    /// and ReportView's functional controls (play / trim / ✕ / share / gear).
     static let action = Color("ActionOrange", bundle: .module)
 
-    /// ブランド中立色（Slate）。
+    /// Brand neutral color (Slate).
     static let slate = Color("Slate", bundle: .module)
 
-    /// アクション面の上に乗せる前景色（オレンジ上のグリフ/テキスト）。
-    /// ライト = 白、ダーク = 濃いブラウン（明るいダークオレンジ上での可読性確保）。
-    /// system 等価が無いためコードで dynamic 定義する。
+    /// Foreground color placed on top of the action surface (glyphs/text on orange).
+    /// Light = white, dark = deep brown (for legibility on the lighter dark-mode orange).
+    /// Defined dynamically in code since there's no system equivalent.
     static let onAction = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0x2A / 255, green: 0x1B / 255, blue: 0x08 / 255, alpha: 1)
             : .white
     })
 
-    // MARK: - 背景 / サーフェス（system semantic）
+    // MARK: - Background / surface (system semantic)
 
     static let background = Color(uiColor: .systemBackground)
     static let groupedBackground = Color(uiColor: .systemGroupedBackground)
-    /// 入力フィールド / グルーピングされたセルの背景。
+    /// Background for input fields / grouped cells.
     static let field = Color(uiColor: .secondarySystemBackground)
     static let separator = Color(uiColor: .separator)
 
-    // MARK: - テキスト（system semantic）
+    // MARK: - Text (system semantic)
 
     static let label = Color(uiColor: .label)
     static let secondaryLabel = Color(uiColor: .secondaryLabel)
     static let tertiaryLabel = Color(uiColor: .tertiaryLabel)
 
-    // MARK: - ステータス（system semantic）
+    // MARK: - Status (system semantic)
 
     static let success = Color(uiColor: .systemGreen)
     static let warning = Color(uiColor: .systemOrange)
     static let danger = Color(uiColor: .systemRed)
 
-    /// 設定画面のリンク / ナビ（標準 iOS の青）。設定は「設定.app 然」とするための例外。
+    /// Link / nav color for the settings screen (standard iOS blue). The exception that
+    /// makes settings feel like the Settings app.
     static let settingsLink = Color(uiColor: .systemBlue)
 
-    // MARK: - UIKit 用ブランド色（FAB など UIView/CALayer レイヤで使う）
+    // MARK: - Brand colors for UIKit (used in UIView/CALayer layers, e.g. the FAB)
 
-    /// アクション色（オレンジ）の `UIColor`。Asset Catalog から解決する。
+    /// `UIColor` for the action color (orange), resolved from the Asset Catalog.
     static let actionUIColor = UIColor(named: "ActionOrange", in: .module, compatibleWith: nil) ?? .systemOrange
-    /// ブランド中立色（Slate）の `UIColor`。
+    /// `UIColor` for the brand neutral color (Slate).
     static let slateUIColor = UIColor(named: "Slate", in: .module, compatibleWith: nil) ?? .systemGray
 }
 #endif

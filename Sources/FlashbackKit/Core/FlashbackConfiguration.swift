@@ -1,33 +1,36 @@
 import Foundation
 
 public struct FlashbackConfiguration: Sendable {
-    /// リングバッファに保持する直前秒数。既定 20（設定画面の選択肢 10/20/30/60 と整合）。
+    /// Seconds of recent footage held in the ring buffer. Default 20 (matches the settings
+    /// screen's 10/20/30/60 options).
     public var bufferSeconds: TimeInterval
 
-    /// 有効フラグ。Release ビルドでは原則 false 運用を想定。
+    /// Enabled flag. Generally expected to be false in Release builds.
     public var isEnabled: Bool
 
-    /// レポート UI を起動するトリガ手段の集合（`OptionSet`、複数同時有効）。
-    /// 既定は手持ち=シェイク / 据え置き=フローティングボタン の両対応。
-    /// 環境に応じて `.init(triggers: [.shake])` のように絞れる。
+    /// The set of triggers that launch the report UI (`OptionSet`, multiple at once).
+    /// Default covers both handheld (shake) and stationary (floating button) use.
+    /// Narrow it per environment, e.g. `.init(triggers: [.shake])`.
     public var triggers: FlashbackTrigger
 
-    /// `.floatingButton` の初期表示位置（四隅）。既定は右下。
-    /// 表示後は QA がドラッグで動かせる。
+    /// Initial corner for `.floatingButton`. Default bottom-trailing.
+    /// QA can drag it elsewhere once shown.
     public var floatingButtonCorner: FloatingButtonCorner
 
-    /// アプリ起動時に画面収録の許可を確認する（＝起動直後に `startCapture`）か。
-    /// **既定は false**：起動時に OS 許可ダイアログを出さず、ユーザが「録画をオンにする」
-    /// （→ プライミング）で能動的に開始する。設定トグルで opt-in でき、選択は永続化される
-    /// （永続値が無い初回のみ本既定値を採用）。
+    /// Whether to request screen-recording permission at launch (i.e. `startCapture`
+    /// immediately). **Default false**: don't show the OS permission dialog at launch; the
+    /// user starts recording deliberately via "turn on recording" (priming). Can be opted
+    /// into via the settings toggle, and the choice is persisted (this default applies only
+    /// on first run, when no persisted value exists).
     public var promptOnLaunch: Bool
 
-    /// シミュレータ上で起動するか。**既定は false**：シミュレータは ReplayKit 実録画が
-    /// 物理的に不可なので、`Flashback.start()` を何もしない（FAB・トリガ・オーバーレイを置かない）。
-    /// 開発者がシム上で別アプリを開発・新規シムを多用する際に、使えない FAB が常駐したり
-    /// オンボーディングが走ったりする煩わしさを避けるため。
-    /// SDK 自体の UI をシムで確認したい場合のみ true にする（Example アプリは true）。
-    /// 実機ビルドには影響しない（このフラグは `targetEnvironment(simulator)` 時のみ参照）。
+    /// Whether to run on the Simulator. **Default false**: real ReplayKit recording is
+    /// physically impossible on the Simulator, so `Flashback.start()` does nothing (no FAB,
+    /// triggers, or overlay). This avoids an unusable FAB lingering or onboarding running
+    /// when a developer is building a different app on the Simulator or spinning up many
+    /// new simulators. Set true only to inspect the SDK's own UI on the Simulator (the
+    /// Example app sets it true). Has no effect on device builds (this flag is only read
+    /// under `targetEnvironment(simulator)`).
     public var runsOnSimulator: Bool
 
     public init(
@@ -47,7 +50,7 @@ public struct FlashbackConfiguration: Sendable {
     }
 }
 
-/// フローティングボタンの初期表示位置（四隅）。
+/// Initial corner for the floating button.
 public enum FloatingButtonCorner: Sendable {
     case topLeading
     case topTrailing

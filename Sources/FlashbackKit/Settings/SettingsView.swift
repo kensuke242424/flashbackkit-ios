@@ -2,10 +2,11 @@
 import SwiftUI
 import UIKit
 
-/// 設定画面（システム純正ルック）。レポート画面の歯車から push される。
+/// Settings screen (native system look). Pushed from the gear in the report screen.
 ///
-/// この画面だけは標準 iOS 色で「設定.app 然」とする: 戻る/リンク=青・トグル=緑。
-/// 例外として保持秒数の選択チェックのみブランドのアクション色（オレンジ）。
+/// Only this screen uses standard iOS colors to feel like Settings.app: back/links blue,
+/// toggles green. The one exception is the retention-seconds checkmark, which uses the
+/// brand action color (orange).
 struct SettingsView: View {
     @ObservedObject var store: FlashbackSettingsStore
 
@@ -17,21 +18,24 @@ struct SettingsView: View {
         }
         .navigationTitle("設定")
         .navigationBarTitleDisplayMode(.inline)
-        // 設定は「設定.app 然」: 親 ReportView のオレンジ tint を上書きして青（戻る/リンク）に。
+        // Settings.app look: override the parent ReportView's orange tint with blue
+        // (back/links).
         .tint(FlashbackColor.settingsLink)
     }
 
-    // MARK: - 表示
+    // MARK: - Display
 
     private var displaySection: some View {
         Section {
-            // トグルは緑に固定（view の青 tint に流されないよう明示）。
+            // Pin the toggle to green (don't inherit the view's blue tint).
             Toggle("画面上に起動ボタンを表示", isOn: $store.floatingButtonVisible)
                 .tint(FlashbackColor.success)
-            // ラベルに主語（起動ボタン）と「OS の」を入れて自己説明的に。除外を外すと OS のスクショ/
-            // 画面収録には写るが、Flashback 自身の録画クリップ（別オーバーレイ window＝ReplayKit が拾わない）
-            // には依然写らない。混同を避けるため「OS の」と明示する。
-            // 値はストアの除外フラグの反転（オン＝写す＝除外しない）。既定オフ＝写さない。
+            // The label names the subject (launch button) and "OS" so it self-explains.
+            // Disabling the exclusion makes the button appear in OS screenshots/recordings,
+            // but it still never appears in Flashback's own clip (a separate overlay window
+            // that ReplayKit doesn't capture). "OS" is spelled out to avoid confusion.
+            // The value is the inverse of the store's exclusion flag (on = shown = not
+            // excluded). Default off = hidden.
             Toggle("起動ボタンを OS のスクリーンショット・録画に写す", isOn: Binding(
                 get: { !store.excludesButtonFromCapture },
                 set: { store.excludesButtonFromCapture = !$0 }
@@ -44,7 +48,7 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 保持する録画の長さ
+    // MARK: - Retention length
 
     private var retentionSection: some View {
         Section {
@@ -59,7 +63,7 @@ struct SettingsView: View {
                         if store.retentionSeconds == seconds {
                             Image(systemName: "checkmark")
                                 .fontWeight(.semibold)
-                                .foregroundStyle(FlashbackColor.action)   // 選択チェック=アクション色
+                                .foregroundStyle(FlashbackColor.action)   // selection checkmark = action color
                         }
                     }
                     .contentShape(Rectangle())
@@ -73,42 +77,46 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - 録画（権限）
+    // MARK: - Recording (permission)
 
     private var permissionSection: some View {
         Section {
-            // 起動時に権限を確認するか（既定オフ）。トグルは緑固定（青 tint に流されないよう明示）。
+            // Whether to prompt for permission on launch (default off). Pin the toggle to
+            // green (don't inherit the blue tint).
             Toggle("アプリ起動時に権限を確認する", isOn: $store.promptOnLaunch)
                 .tint(FlashbackColor.success)
             HStack {
                 Text("画面収録")
                     .foregroundStyle(FlashbackColor.label)
                 Spacer()
-                // 「録画が実際に回っているか」を表示（環境の可否ではなく確定状態 isRecordingActive）。
-                // 許可確定後だけ「録画中」。@Published なので応答後に自動更新される。設定画面は標準色。
+                // Show whether recording is actually running (the confirmed state
+                // isRecordingActive, not environment availability). Only "recording" once
+                // permission is confirmed; @Published auto-updates after the response.
                 if store.isRecordingActive {
                     Text("録画中").foregroundStyle(FlashbackColor.success)
                 } else {
                     Text("停止中").foregroundStyle(FlashbackColor.secondaryLabel)
                 }
             }
-            // 録画中は停止動線（赤）。録画オフ かつ 端末が録画可能なら有効化動線（青）。
-            // 録画不可（Simulator/非対応＝押しても無反応）では何も出さない。
+            // While recording, show a stop action (red). When off and the device can
+            // record, show an enable action (blue). When recording is unavailable
+            // (Simulator/unsupported; tapping would do nothing), show nothing.
             if store.isRecordingActive {
                 Button {
                     store.stopRecording()
                 } label: {
                     Text("録画を停止する")
-                        .foregroundStyle(FlashbackColor.danger)         // 赤（オフにする操作）
+                        .foregroundStyle(FlashbackColor.danger)         // red (turn-off action)
                         .contentShape(Rectangle())
                 }
             } else if store.isRecordingAvailable() {
-                // iOS 設定にトグルが無いため、deep-link ではなく録画の再試行を提供する。
+                // iOS has no Settings toggle for this, so offer a recording retry rather
+                // than a deep link.
                 Button {
                     store.retryRecording()
                 } label: {
                     Text("録画を有効にする")
-                        .foregroundStyle(FlashbackColor.settingsLink)   // 青
+                        .foregroundStyle(FlashbackColor.settingsLink)   // blue
                         .contentShape(Rectangle())
                 }
             }

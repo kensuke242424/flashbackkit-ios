@@ -1,19 +1,20 @@
 #if canImport(SwiftUI)
 import SwiftUI
 
-/// Time Slice ロゴのくさび（扇形）Shape。
+/// The wedge (pie slice) Shape of the Time Slice logo.
 ///
-/// 「時の時計」＋「直前 N 秒を切り取る」を表す、12 時から**反時計回り（左斜め上）**に開くパイ片。
-/// 正本（design_handoff `_tsWedge`）の仕様どおり、扇は `cd ∈ [−66°, 0°]`＝真上から
-/// 反時計回りに 66°（10 時方向の左上）を満たす。巻き戻し（時間を遡る）方向を表す。
+/// A pie slice opening **counterclockwise (upper-left)** from 12 o'clock, evoking
+/// a clock that "cuts out the last N seconds." The wedge spans `cd ∈ [−66°, 0°]`,
+/// i.e. 66° counterclockwise from straight up (toward 10 o'clock), representing the
+/// rewind (going back in time) direction.
 ///
-/// 角度は **時計座標**（0° = 12 時、時計回りに増加）で受ける。SwiftUI の
-/// `addArc(clockwise:)` は y 下向き座標で意味が反転して紛らわしいため、
-/// 円弧を点サンプリングで描いて向きの曖昧さを排除している。
+/// Angles are given in **clock coordinates** (0° = 12 o'clock, increasing clockwise).
+/// SwiftUI's `addArc(clockwise:)` flips meaning under its y-down coordinate space, so
+/// the arc is point-sampled instead to remove any directional ambiguity.
 struct TimeSliceWedge: Shape {
-    /// くさびの開始角（12 時基準・時計回り）。既定 0°（真上）。
+    /// Start angle of the wedge (12 o'clock origin, clockwise). Default 0° (straight up).
     var start: Angle = .degrees(0)
-    /// 開く角度（真上から反時計回りに開く）。既定 66°。
+    /// Sweep angle (opens counterclockwise from straight up). Default 66°.
     var sweep: Angle = .degrees(66)
 
     func path(in rect: CGRect) -> Path {
@@ -24,9 +25,9 @@ struct TimeSliceWedge: Shape {
 
         let steps = 48
         for i in 0...steps {
-            // 真上から反時計回りに開く（cd を負方向へ）→ 左斜め上の扇。
+            // Open counterclockwise from straight up (cd toward negative) -> upper-left wedge.
             let clock = start.radians - sweep.radians * Double(i) / Double(steps)
-            // 時計座標 → 画面座標: 0° で真上 (0, -r)、時計回りに増加。
+            // Clock coords -> screen coords: 0° is straight up (0, -r), increasing clockwise.
             let x = center.x + radius * sin(clock)
             let y = center.y - radius * cos(clock)
             path.addLine(to: CGPoint(x: x, y: y))
@@ -36,14 +37,15 @@ struct TimeSliceWedge: Shape {
     }
 }
 
-/// Time Slice マーク（リング + くさび + 針 + ハブ）。
+/// The Time Slice mark (ring + wedge + hand + hub).
 ///
-/// 色と不透明度を差し替えるだけで FAB の4状態（録画中 / 長押し中 / 端タック / 休止）と
-/// ロゴ用途を表現できるよう、要素ごとに色を受ける。寸法は viewBox 64 を基準に
-/// 与えられた frame へ等倍スケールする（リング半径 20・線幅 3.2・ハブ半径 2.6・針 12時方向 r=18）。
-/// 針（12時を指す時計の針）はブランド更新で追加。リング/ハブと同色。
+/// Each element takes its own color so that swapping colors and opacity alone covers the
+/// FAB's four states (recording / held / edge-tucked / dormant) and the logo. Dimensions
+/// are based on viewBox 64 and scaled uniformly into the given frame (ring radius 20,
+/// stroke 3.2, hub radius 2.6, hand pointing to 12 o'clock at r=18). The hand (clock hand
+/// pointing to 12) shares the ring/hub color.
 ///
-/// 呼び出し側で `.frame(width:height:)` を指定して使う（例: FAB マーク 36pt）。
+/// Set the size at the call site with `.frame(width:height:)` (e.g. 36pt for the FAB mark).
 struct TimeSliceMark: View {
     var ringColor: Color
     var wedgeColor: Color
@@ -54,24 +56,24 @@ struct TimeSliceMark: View {
     var body: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
-            let k = side / 64                     // viewBox 64 からのスケール
-            let ringDiameter = 40 * k             // 半径 20
+            let k = side / 64                     // scale from viewBox 64
+            let ringDiameter = 40 * k             // radius 20
             let strokeWidth = 3.2 * k
-            let hubDiameter = 5.2 * k             // 半径 2.6
-            let handLength = 18 * k               // 中心→12時の針（r=18・リング内側 2 手前）
+            let hubDiameter = 5.2 * k             // radius 2.6
+            let handLength = 18 * k               // center -> 12 o'clock hand (r=18, 2 short of ring inner edge)
 
             ZStack {
-                // くさび（最背面）。リングを上に重ねることで、リングがくさびの全周を囲う輪郭になる。
+                // Wedge (backmost). Layering the ring on top makes the ring an outline around the whole wedge.
                 TimeSliceWedge(start: wedgeStart, sweep: wedgeSweep)
                     .fill(wedgeColor)
                     .frame(width: ringDiameter, height: ringDiameter)
 
-                // リング（くさびの上）。くさびと別色なら全周の輪郭線として効く。
+                // Ring (above the wedge). When colored differently from the wedge, it reads as a full outline.
                 Circle()
                     .stroke(ringColor, lineWidth: strokeWidth)
                     .frame(width: ringDiameter, height: ringDiameter)
 
-                // 針（12時方向）。リング/ハブと同色・丸キャップ。中心から真上へ伸ばす。
+                // Hand (toward 12 o'clock). Same color as ring/hub, round cap, extending straight up from center.
                 Capsule()
                     .fill(ringColor)
                     .frame(width: strokeWidth, height: handLength)
@@ -84,21 +86,21 @@ struct TimeSliceMark: View {
             .frame(width: geo.size.width, height: geo.size.height)
         }
         .aspectRatio(1, contentMode: .fit)
-        .accessibilityHidden(true)               // 装飾。意味は親の accessibilityLabel が持つ。
+        .accessibilityHidden(true)               // Decorative; meaning is carried by the parent's accessibilityLabel.
     }
 }
 
 extension TimeSliceMark {
-    /// ブランドロゴ用（リング/ハブ = label・くさび = アクションオレンジ）。
+    /// For the brand logo (ring/hub = label, wedge = Action Orange).
     static func logo() -> TimeSliceMark {
         TimeSliceMark(ringColor: FlashbackColor.label,
                       wedgeColor: FlashbackColor.action,
                       hubColor: FlashbackColor.label)
     }
 
-    /// 録画 OFF（休止 / おやすみ）のマーク。グレーのリング＋針＋ハブのみ。
-    /// FAB の OFF 状態（くさびを畳んで非表示）と表現を合わせるため、くさびは出さない
-    /// （`wedgeSweep = 0`＝「録っていない＝スライスが無い」を形で示す）。
+    /// Recording-OFF (dormant) mark: gray ring + hand + hub only.
+    /// To match the FAB's OFF state (wedge collapsed and hidden), the wedge is not drawn
+    /// (`wedgeSweep = 0` shows "not recording = no slice" in the form itself).
     static func dormantOnSurface() -> TimeSliceMark {
         TimeSliceMark(ringColor: FlashbackColor.slate,
                       wedgeColor: FlashbackColor.slate.opacity(0.55),
@@ -106,8 +108,8 @@ extension TimeSliceMark {
                       wedgeSweep: .degrees(0))
     }
 
-    /// 録画オン直後（録画中）のマーク。明るいサーフェス上でオレンジ一色。
-    /// 色ルール「グレー→オレンジ＝録画中」を表す（ReportView の justEnabled 状態）。
+    /// Mark for just after recording turns on (recording): all orange on a light surface.
+    /// Expresses the color rule "gray -> orange = recording" (ReportView's justEnabled state).
     static func recordingOnSurface() -> TimeSliceMark {
         TimeSliceMark(ringColor: FlashbackColor.action,
                       wedgeColor: FlashbackColor.action,
@@ -115,8 +117,7 @@ extension TimeSliceMark {
     }
 }
 
-/// FlashbackKit ワードマーク。"Flashback"（label）+ "Kit"（オレンジ）、semibold、軽いトラッキング。
-/// ブランド名は英語のまま（UI ラベルは日本語）。
+/// FlashbackKit wordmark: "Flashback" (label) + "Kit" (orange), semibold, slight tracking.
 struct FlashbackWordmark: View {
     var size: Font.TextStyle = .headline
 
@@ -129,7 +130,7 @@ struct FlashbackWordmark: View {
     }
 }
 
-/// マーク + ワードマークのロゴロックアップ。
+/// Logo lockup: mark + wordmark.
 struct FlashbackLogo: View {
     var markSize: CGFloat = 22
 
@@ -149,7 +150,7 @@ struct FlashbackLogo: View {
     VStack(spacing: 28) {
         FlashbackLogo()
         HStack(spacing: 20) {
-            // 録画中（オレンジ FAB 想定: 白リング・白@0.5 くさび）
+            // Recording (orange FAB: white ring, white@0.5 wedge)
             TimeSliceMark(ringColor: .white,
                           wedgeColor: .white.opacity(0.5),
                           hubColor: .white)
@@ -157,7 +158,7 @@ struct FlashbackLogo: View {
                 .padding(10)
                 .background(FlashbackColor.action, in: Circle())
 
-            // 端タック（グレー FAB・オレンジ@1.0 くさび）
+            // Edge-tucked (gray FAB, orange@1.0 wedge)
             TimeSliceMark(ringColor: .white,
                           wedgeColor: FlashbackColor.action,
                           hubColor: .white)
@@ -165,7 +166,7 @@ struct FlashbackLogo: View {
                 .padding(10)
                 .background(FlashbackColor.slate.opacity(0.82), in: Circle())
 
-            // 休止（明るいサーフェス上）
+            // Dormant (on a light surface)
             TimeSliceMark.dormantOnSurface()
                 .frame(width: 36, height: 36)
         }

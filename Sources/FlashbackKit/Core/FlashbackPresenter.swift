@@ -3,52 +3,57 @@ import Foundation
 import UIKit
 import SwiftUI
 
-/// SDK 専用の overlay `UIWindow` を立て、ホストアプリの view 階層に干渉せず
-/// デバッグトリガ（フローティングボタン）とレポート UI を表示する。
+/// Stands up an SDK-owned overlay `UIWindow` and shows the debug triggers (FAB)
+/// and report UI without touching the host app's view hierarchy.
 ///
-/// ホスト側のコードは `Flashback.start()` のみで完結する。
+/// The host only needs `Flashback.start()`.
 ///
-/// 設計メモ: フローティングボタンは root の hosting view の一部にせず、
-/// 独立した小さな subview（専用 hosting controller）として載せる。
-/// こうすると `hitTest` でボタン領域だけタップを拾い、それ以外はホストへ
-/// パススルーできる（SwiftUI のボタンは固有の UIView を持たないため、
-/// 全画面 hosting view に混ぜるとタップ判定がパススルーに巻き込まれる）。
+/// Design note: the FAB is not part of the root hosting view; it rides on its own
+/// small subview (a dedicated hosting controller). That way `hitTest` only catches
+/// taps on the button area and passes everything else through to the host. SwiftUI
+/// buttons have no backing UIView of their own, so mixing them into a full-screen
+/// hosting view would pull their hit testing into the passthrough.
 @MainActor
 final class FlashbackPresenter {
-    /// レポートのハーフ（未展開）detent。`.medium` より少し高く、下のタイトル入力を覗かせる。
+    /// The report's half (collapsed) detent. Slightly taller than `.medium` so the
+    /// title input below peeks through.
     static let halfDetentID = UISheetPresentationController.Detent.Identifier("flashbackHalf")
 
     private let model = OverlayModel()
     private var window: UIWindow?
     private weak var reportHost: UIViewController?
-    /// レポートシートの detent 状態（medium=未展開 / large=展開）。delegate と SwiftUI で共有。
+    /// Report sheet detent state (medium = collapsed / large = expanded). Shared
+    /// between the delegate and SwiftUI.
     private var reportDetent: SheetDetentModel?
-    /// シートの detent 変更を監視するデリゲート（自前で強参照して生かす）。
+    /// Delegate observing the sheet's detent changes. Strongly retained to keep it alive.
     private var reportSheetDelegate: ReportSheetDelegate?
-    /// info トーストの自動消去用の世代カウンタ（古いタイマーが新しいトーストを消さないように）。
+    /// Generation counter for auto-dismissing info toasts, so a stale timer never
+    /// clears a newer toast.
     private var infoToastGeneration = 0
-    /// トーストの下端制約（ホストのタブバー高さに応じて表示時に更新する）。
+    /// Toast bottom constraint, updated at display time for the host's tab bar height.
     private var toastBottomConstraint: NSLayoutConstraint?
 
-    /// install() が（アクティブシーン未接続で）保留され、後からシーン接続で実際に設置できた時に
-    /// 一度だけ呼ぶフック。`triggerHost` 依存の後段（FAB など）をコントローラ側が再設置するために使う。
+    /// Called once when an install() deferred (no active scene yet) finally lands on
+    /// scene connection. Lets the controller re-install `triggerHost`-dependent pieces
+    /// (e.g. the FAB).
     var onDeferredInstall: (() -> Void)?
 
-    /// シーン未接続で install() を保留し、シーン接続/活性化を待っている間だけ生きる観測子。
+    /// Observer that lives only while a deferred install() waits for scene connection/activation.
     private var sceneObserver: SceneConnectionObserver?
 
-    /// 実コンテンツ（FAB / トースト）を OS キャプチャ（スクショ/録画/ミラーリング/自前 ReplayKit）から
-    /// 除外するか。既定 true（写さない）。install 前に設定されても保持し、`finishInstall` で root へ適用する。
-    /// 設定トグル「スクショ・録画に写す」がオフ＝true、オン＝false。
+    /// Whether actual content (FAB / toast) is excluded from OS capture (screenshot /
+    /// recording / mirroring / our own ReplayKit). Default true (hidden). Retained even
+    /// if set before install and applied to root in `finishInstall`. The "show in
+    /// screenshots/recordings" toggle off = true, on = false.
     private(set) var excludesContentFromCapture = true
 
-    /// overlay window を前面シーンに設置する。トリガ用の UI（ボタン / ジェスチャ）は
-    /// `triggerHost` を介して各 detector が載せる。
+    /// Installs the overlay window on the foreground scene. Each detector mounts its
+    /// trigger UI (button / gesture) via `triggerHost`.
     ///
-    /// SceneDelegate 採用アプリで `didFinishLaunching`（シーン接続前）から呼ばれた場合は、
-    /// アクティブな `UIWindowScene` がまだ無いため設置を**保留**し、シーン接続後に自動で設置する。
-    /// これで呼び出しタイミング（didFinishLaunching / scene(_:willConnectTo:) / onAppear）に
-    /// 依存せず overlay が必ず立つ。
+    /// In SceneDelegate apps called from `didFinishLaunching` (before scene connection),
+    /// there's no active `UIWindowScene` yet, so the install is **deferred** and runs
+    /// automatically once a scene connects. This makes the overlay come up regardless of
+    /// call timing (didFinishLaunching / scene(_:willConnectTo:) / onAppear).
     func install() {
         guard window == nil else { return }
         guard let scene = Self.activeScene() else {
@@ -58,61 +63,64 @@ final class FlashbackPresenter {
         finishInstall(in: scene)
     }
 
-    /// 実際に overlay window を生成して設置する（シーンが得られた後の共通処理）。
+    /// Creates and installs the overlay window (shared path once a scene is available).
     private func finishInstall(in scene: UIWindowScene) {
         let window = PassthroughWindow(windowScene: scene)
         window.windowLevel = .alert + 1
         window.backgroundColor = .clear
 
-        // root view を「内容を OS キャプチャから除外するセキュア root」にする。FAB / トーストはこの配下に
-        // 載るため、スクショ/録画/ミラーリング/自前 ReplayKit のいずれにも写り込まない。
+        // Use a secure root that excludes its content from OS capture. The FAB / toast
+        // mount under it, so they never appear in screenshots / recordings / mirroring /
+        // our own ReplayKit.
         let root = SecureOverlayRootController()
         root.view.backgroundColor = .clear
         window.rootViewController = root
         window.isHidden = false
         self.window = window
 
-        root.view.layoutIfNeeded()          // コンテンツ追加前にセキュア canvas を解決しておく
+        root.view.layoutIfNeeded()          // resolve the secure canvas before adding content
         (root.view as? SecureOverlayRootView)?.excludesFromCapture = excludesContentFromCapture
         installStatusOverlay(in: root)
     }
 
-    /// 実コンテンツ（FAB / トースト）を OS キャプチャから除外するかを実行時に切り替える（設定トグル）。
-    /// `false` で意図的にスクショ/録画へ写す。install 前でも値を保持し、設置時に反映する。
+    /// Toggles at runtime whether actual content (FAB / toast) is excluded from OS
+    /// capture (settings toggle). `false` intentionally shows it in screenshots/recordings.
+    /// Retains the value before install and applies it on install.
     func setExcludesContentFromCapture(_ exclude: Bool) {
         excludesContentFromCapture = exclude
         (window?.rootViewController?.view as? SecureOverlayRootView)?.excludesFromCapture = exclude
     }
 
-    /// アクティブシーン未接続のため設置を保留し、シーン接続/活性化通知を待つ。
+    /// Defers install (no active scene) and waits for a scene connection/activation notification.
     private func observeSceneConnectionForDeferredInstall() {
-        guard sceneObserver == nil else { return }                 // 既に待機中
+        guard sceneObserver == nil else { return }                 // already waiting
         FlashbackLog.lifecycle.info("overlay 設置を保留：アクティブな UIWindowScene が未接続。シーン接続後に自動設置する（SceneDelegate アプリで didFinishLaunching から start() を呼んだ場合など）。")
         sceneObserver = SceneConnectionObserver { [weak self] in self?.tryDeferredInstall() }
     }
 
-    /// 保留していた設置を、アクティブシーンが得られ次第完了させる。完了後に onDeferredInstall を一度呼ぶ。
+    /// Completes the deferred install as soon as an active scene is available, then
+    /// calls onDeferredInstall once.
     private func tryDeferredInstall() {
-        guard window == nil else {                                 // 既に他経路で設置済み
+        guard window == nil else {                                 // already installed via another path
             sceneObserver = nil
             return
         }
-        guard let scene = Self.activeScene() else { return }       // まだ得られない（次の通知を待つ）
+        guard let scene = Self.activeScene() else { return }       // not available yet (wait for next notification)
         finishInstall(in: scene)
-        sceneObserver = nil                                        // 監視終了（deinit で removeObserver）
+        sceneObserver = nil                                        // stop observing (deinit removes the observer)
         FlashbackLog.lifecycle.info("シーン接続を検知し overlay を自動設置（保留分）。")
         onDeferredInstall?()
     }
 
-    /// トリガ detector が UI（フローティングボタン）を載せるための
-    /// overlay root view controller。`install()` 後に有効。
+    /// Overlay root view controller that trigger detectors mount UI (FAB) onto.
+    /// Valid after `install()`.
     var triggerHost: UIViewController? {
         window?.rootViewController
     }
 
-    /// overlay window を撤去する。
+    /// Tears down the overlay window.
     func uninstall() {
-        sceneObserver = nil                                        // 保留中のシーン待ち観測を解除
+        sceneObserver = nil                                        // cancel any pending scene-wait observation
         reportHost?.dismiss(animated: false)
         reportHost = nil
         reportSheetDelegate = nil
@@ -121,16 +129,16 @@ final class FlashbackPresenter {
         window = nil
     }
 
-    /// レポート入力 UI をハーフモーダル（`.medium` 起点・上スワイプで `.large`）で表示する。
+    /// Presents the report input UI as a half-modal (starts at `.medium`, swipe up for `.large`).
     ///
-    /// 初回は `.medium` で「動画プレビュー＋クリップバー（トリマー）」までを見せ、共有(↑)は
-    /// ナビバーに常駐するので **medium のまま共有まで進める**。上スワイプ（`.large`）で
-    /// タイトル・環境情報まで開く。動画プレビューは `.medium` で小さく / `.large` で大きくし、
-    /// ハーフでクリップバーが畳まれないようにする。
+    /// At `.medium` it shows the video preview plus the clip bar (trimmer); share (↑) lives
+    /// in the nav bar so you can **share without leaving medium**. Swiping up (`.large`) reveals
+    /// the title and device info. The preview is small at `.medium` and large at `.large`, so the
+    /// half height never collapses the clip bar.
     /// - Parameters:
-    ///   - clipURL: 直前クリップ（あればプレビュー＋トリミングを表示）。無ければ「おやすみ」案内。
-    ///   - onShare: 共有アクション。切り出し→commit し、共有シート用の最終クリップ URL を返す。
-    ///   - settings: 設定画面のストア（歯車 / 「録画をオンにする」から push）。
+    ///   - clipURL: the most recent clip (shows preview + trimming if present); otherwise an idle notice.
+    ///   - onShare: share action. Trims, commits, and returns the final clip URL for the share sheet.
+    ///   - settings: settings screen store (pushed from the gear / "turn recording on").
     func presentReport(
         clipURL: URL?,
         onShare: @escaping (String, ClosedRange<Double>?) async -> URL?,
@@ -141,27 +149,28 @@ final class FlashbackPresenter {
         let detent = SheetDetentModel()
         let report = ReportView(
             clipURL: clipURL,
-            device: .current(),                           // @MainActor 採取（本メソッドは @MainActor）
+            device: .current(),                           // @MainActor capture (this method is @MainActor)
             onShare: onShare,
             onCancel: { [weak self] in self?.dismissReport() },
             onRequestExpand: { [weak self] in self?.expandReportSheet() },
             settings: settings,
             detent: detent
         )
-        // 最下部のキャプチャボタンを下端ドラッグしても OS のジェスチャに取られないよう、
-        // 下端のシステムジェスチャを遅延させるホストで提示する。
+        // Present in a host that defers bottom system gestures, so dragging the bottom-edge
+        // capture button doesn't get captured by the OS gestures.
         let host = DeferBottomGesturesHostingController(rootView: report)
         host.modalPresentationStyle = .pageSheet
         if let sheet = host.sheetPresentationController {
-            // 標準の .medium だと録画 View＋トリマーでちょうど埋まり、下のタイトル入力が完全に
-            // 隠れて「続きがある」ことが伝わらない。少しだけ高いカスタム detent で覗かせる
-            // （同時に最下部のキャプチャボタンも下端のシステムジェスチャ帯から離れる）。
+            // Standard .medium gets exactly filled by the recording view + trimmer, fully
+            // hiding the title input below so there's no hint of "more below". A slightly
+            // taller custom detent lets it peek through (and also lifts the bottom capture
+            // button clear of the bottom system-gesture band).
             let halfDetent = UISheetPresentationController.Detent.custom(identifier: Self.halfDetentID) { context in
                 context.maximumDetentValue * 0.58
             }
             sheet.detents = [halfDetent, .large()]
-            sheet.selectedDetentIdentifier = Self.halfDetentID   // 初回はハーフ（タイトルを覗かせる高さ）。
-            sheet.prefersGrabberVisible = true            // 上スワイプで開けると示すグラバー。
+            sheet.selectedDetentIdentifier = Self.halfDetentID   // start at half (height that peeks the title)
+            sheet.prefersGrabberVisible = true            // grabber hinting that it opens on swipe up
             let delegate = ReportSheetDelegate(model: detent)
             sheet.delegate = delegate
             reportSheetDelegate = delegate
@@ -171,14 +180,15 @@ final class FlashbackPresenter {
         root.present(host, animated: true)
     }
 
-    /// レポートシートを `.large`（展開）へ広げる。設定 push などハーフでは窮屈な遷移の前に使う。
+    /// Expands the report sheet to `.large`. Used before transitions that feel cramped at
+    /// half (e.g. pushing settings).
     private func expandReportSheet() {
         guard let sheet = reportHost?.sheetPresentationController else { return }
         sheet.animateChanges { sheet.selectedDetentIdentifier = .large }
-        reportDetent?.isExpanded = true                   // delegate を待たず即反映（プレビュー拡大）。
+        reportDetent?.isExpanded = true                   // reflect immediately without waiting for the delegate (enlarges the preview)
     }
 
-    /// レポート入力 UI を閉じる。
+    /// Dismisses the report input UI.
     func dismissReport() {
         reportHost?.dismiss(animated: true)
         reportHost = nil
@@ -186,9 +196,10 @@ final class FlashbackPresenter {
         reportDetent = nil
     }
 
-    /// 許可プライミング（事前説明）のシート（`.medium`）を overlay 上に提示する。
-    /// FAB のグレータップなどレポートを開かない導線でも、OS 確認の前に「何のために
-    /// 画面録画の許可が要るか」を一枚挟むため。閉じる / スワイプは `dismissReport` 共通で畳む。
+    /// Presents the permission priming sheet (`.medium`) on the overlay. Inserts a screen
+    /// explaining why screen-recording permission is needed before the OS prompt, even on
+    /// paths that don't open the report (e.g. greyed FAB taps). Close / swipe dismiss via
+    /// the shared `dismissReport`.
     func presentPriming(onProceed: @escaping () -> Void, onLater: @escaping () -> Void) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
         let host = UIHostingController(rootView: PermissionPrimingView(onProceed: onProceed, onLater: onLater))
@@ -201,16 +212,16 @@ final class FlashbackPresenter {
         root.present(host, animated: true)
     }
 
-    /// 「2回シェイクで起動」ヒント（中央アラート風カード）を最前面へ提示する。
-    /// フローティングボタンを OFF にした直後に一度だけ呼ばれる想定。暗転スクリム付きの
-    /// 透明ホストを `.overFullScreen` + `.crossDissolve` で重ね、OK で閉じる。
-    /// 既に何かを提示中（別シート等）の場合は出さない（多重提示を避ける）。
+    /// Presents the "shake twice to launch" hint (a center alert-style card) frontmost.
+    /// Expected to fire once right after the FAB is turned off. Overlays a transparent host
+    /// with a dimming scrim via `.overFullScreen` + `.crossDissolve`; OK dismisses it.
+    /// Skipped if something is already presented (avoid double presentation).
     func presentShakeHint() {
         guard let root = window?.rootViewController else { return }
         let top = Self.topmost(from: root)
         guard top.presentedViewController == nil else { return }
 
-        // OK ハンドラから自身を閉じられるよう、生成後に参照を差し込む。
+        // Inject the reference after creation so the OK handler can dismiss itself.
         let box = WeakVCBox()
         let host = UIHostingController(
             rootView: ShakeHintHostView(onDismiss: { [box] in box.vc?.dismiss(animated: true) })
@@ -222,22 +233,22 @@ final class FlashbackPresenter {
         top.present(host, animated: true)
     }
 
-    /// 進行中トースト（オレンジのスピナー）。書き出し中に出す。例:「記憶を辿っています…」。
+    /// Progress toast (orange spinner). Shown during export.
     func showProgress(_ message: String) {
         positionToastAboveHostTabBar()
         model.toast = .progress(message)
     }
 
-    /// 失敗トースト（赤アイコン＋青「再試行」）。自動では閉じない。
+    /// Failure toast (red icon + blue "retry"). Does not auto-dismiss.
     func showFailure(_ message: String, onRetry: @escaping () -> Void) {
         positionToastAboveHostTabBar()
         model.toast = .failure(message: message, onRetry: onRetry)
     }
 
-    /// 情報トースト（操作ヒント）。一定時間で自動的に消える。能動的な操作を伴わない
-    /// 一過性の案内（例: FAB を短くタップした時の「長押しでレポート起動」）に使う。
-    /// 世代カウンタで「この自動消去が出した info をまだ表示中の時だけ」消し、
-    /// 後から別トースト（進行中など）が乗った場合は誤って消さない。
+    /// Info toast (operation hint). Auto-dismisses after a delay. For transient guidance that
+    /// requires no active action (e.g. a long-press hint shown after a quick FAB tap). The
+    /// generation counter clears it only while this auto-dismiss's own info is still showing,
+    /// so a later toast (e.g. progress) isn't cleared by mistake.
     func showInfo(_ message: String, duration: TimeInterval = 1.8) {
         positionToastAboveHostTabBar()
         infoToastGeneration += 1
@@ -249,22 +260,23 @@ final class FlashbackPresenter {
         }
     }
 
-    /// トーストを消す。
+    /// Hides the toast.
     func hideToast() {
         model.toast = nil
     }
 
-    /// 進行中（progress）トーストだけを消す。長押しの早出し進行中トーストの取消用。
-    /// info（操作ヒント）や failure は消さない（短タップで出したヒントを、同じ指離れの
-    /// `onPressCancel` が直後に巻き込んで消す競合を防ぐ）。
+    /// Hides only the progress toast. Used to cancel the early-shown long-press progress
+    /// toast. Leaves info (operation hints) and failure alone, so a hint shown on a short tap
+    /// isn't swept away right after by the same finger-up's `onPressCancel`.
     func hideProgressToast() {
         if case .progress = model.toast { model.toast = nil }
     }
 
     #if DEBUG
-    /// DEBUG 専用: 設定画面を単体（自前の NavigationStack）で提示する（見た目確認用）。
-    /// 本番は ReportView の歯車から push され「‹ レポート」で戻れるが、単体提示は親が無いため
-    /// 「閉じる」を足して手詰まりにならないようにする（本番の SettingsView には影響しない）。
+    /// DEBUG only: presents the settings screen standalone (in its own NavigationStack) for
+    /// visual checks. In production it's pushed from ReportView's gear and backs out via the
+    /// report nav bar, but the standalone presentation has no parent, so a "close" button is
+    /// added to avoid a dead end (does not affect the production SettingsView).
     func debugPresentSettings(store: FlashbackSettingsStore) {
         guard let root = window?.rootViewController, root.presentedViewController == nil else { return }
         let view = NavigationStack {
@@ -283,18 +295,20 @@ final class FlashbackPresenter {
 
     #endif
 
-    // MARK: - 設置
+    // MARK: - Install
 
     private func installStatusOverlay(in root: UIViewController) {
         let overlay = UIHostingController(rootView: StatusOverlay(model: model))
         overlay.view.backgroundColor = .clear
         overlay.view.translatesAutoresizingMaskIntoConstraints = false
-        // 下中央にトースト分だけ載せる（コンテンツサイズ）。失敗トーストの「再試行」を
-        // タップできるよう操作は有効。トースト以外の領域は覆わないのでホスト/FAB を妨げない。
+        // Mount just the toast at bottom center (content-sized). Interaction stays enabled so
+        // the failure toast's "retry" is tappable. It covers no area outside the toast, so it
+        // never blocks the host or FAB.
         root.addChild(overlay)
         root.view.addSubview(overlay.view)
         let guide = root.view.safeAreaLayoutGuide
-        // 下端から基準 36pt 上。ホストにタブバーがあれば表示時にその分さらに持ち上げる（下記）。
+        // Base 36pt above the bottom. If the host has a tab bar, lift it further by that height
+        // at display time (below).
         let bottom = overlay.view.bottomAnchor.constraint(equalTo: guide.bottomAnchor, constant: -Self.toastBaseBottomMargin)
         toastBottomConstraint = bottom
         NSLayoutConstraint.activate([
@@ -308,38 +322,39 @@ final class FlashbackPresenter {
 
     private static let toastBaseBottomMargin: CGFloat = 36
 
-    /// トーストがホストのタブバーに被らないよう、表示直前に下オフセットへタブバー高さを加える
-    /// （タブバーが無ければ基準値のまま）。タブバーは別 window なので FAB と同じ検出を流用する。
+    /// Just before display, adds the tab bar height to the bottom offset so the toast doesn't
+    /// overlap the host's tab bar (stays at base if there's no tab bar). The tab bar lives in a
+    /// separate window, so this reuses the same detection as the FAB.
     private func positionToastAboveHostTabBar() {
         guard let container = window?.rootViewController?.view else { return }
         let inset = FloatingButtonTrigger.hostTabBarInset(in: container)
         toastBottomConstraint?.constant = -(Self.toastBaseBottomMargin + inset)
     }
 
-    /// 提示チェーンの最前面 view controller を辿る。
+    /// Walks the presentation chain to the frontmost view controller.
     private static func topmost(from vc: UIViewController) -> UIViewController {
         var top = vc
         while let presented = top.presentedViewController { top = presented }
         return top
     }
 
-    /// アクティブな foreground シーンを探す。
+    /// Finds the active foreground scene.
     private static func activeScene() -> UIWindowScene? {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
     }
 }
 
-/// 生成後に view controller 参照を差し込み、クロージャから弱参照で閉じるための箱。
+/// Box for injecting a view controller reference after creation, so a closure can weakly dismiss it.
 @MainActor
 private final class WeakVCBox {
     weak var vc: UIViewController?
 }
 
-/// アクティブシーン未接続時の install() 保留→自動設置のため、シーン接続/活性化通知を待つ観測子。
-/// `NotificationCenter` の selector ターゲットには ObjC 対応オブジェクトが要るため NSObject に切り出す
-/// （`FlashbackPresenter` 自体は NSObject ではない）。通知は main 配送されるが、Swift6 のため
-/// `@MainActor` へ hop してからホストへ知らせる。
+/// Waits for a scene connection/activation notification to drive the deferred install when no
+/// active scene exists. Split out into an NSObject because `NotificationCenter`'s selector target
+/// needs an ObjC-capable object (`FlashbackPresenter` itself isn't NSObject). Notifications are
+/// delivered on main, but for Swift 6 we hop to `@MainActor` before notifying the host.
 @MainActor
 private final class SceneConnectionObserver: NSObject {
     private let onConnect: () -> Void
@@ -348,15 +363,16 @@ private final class SceneConnectionObserver: NSObject {
         self.onConnect = onConnect
         super.init()
         let nc = NotificationCenter.default
-        // willConnect（接続）と didActivate（活性化）の早い方で拾う。tryDeferredInstall 側が
-        // 「設置済み / シーン未取得」を冪等にガードするので二重発火は無害。
+        // Catch on whichever fires first, willConnect or didActivate. tryDeferredInstall guards
+        // "already installed / no scene yet" idempotently, so a double fire is harmless.
         nc.addObserver(self, selector: #selector(sceneConnected),
                        name: UIScene.willConnectNotification, object: nil)
         nc.addObserver(self, selector: #selector(sceneConnected),
                        name: UIScene.didActivateNotification, object: nil)
     }
 
-    /// 通知コールバック（背景スレッドで来うるため nonisolated）。値は使わず `@MainActor` へ hop する。
+    /// Notification callback (nonisolated since it may arrive off the main thread). Ignores the
+    /// payload and hops to `@MainActor`.
     @objc nonisolated private func sceneConnected() {
         Task { @MainActor [weak self] in self?.onConnect() }
     }
@@ -366,16 +382,16 @@ private final class SceneConnectionObserver: NSObject {
     }
 }
 
-/// レポートのハーフモーダルが `.large`（展開）まで開いているかを SwiftUI 側へ伝える。
-/// 動画プレビューの拡大などに使う。`ReportSheetDelegate` が detent 変化で更新する。
+/// Tells SwiftUI whether the report half-modal is open all the way to `.large` (expanded). Used
+/// e.g. to enlarge the video preview. `ReportSheetDelegate` updates it on detent changes.
 @MainActor
 final class SheetDetentModel: ObservableObject {
-    /// `.large` まで展開済みか（false = `.medium` のハーフ）。
+    /// Whether it's expanded to `.large` (false = the `.medium` half).
     @Published var isExpanded: Bool = false
 }
 
-/// シートの選択 detent 変化を監視し、`SheetDetentModel` へ反映するデリゲート。
-/// UIKit が main で呼ぶため `@MainActor`。
+/// Delegate observing the sheet's selected-detent changes and reflecting them into
+/// `SheetDetentModel`. `@MainActor` since UIKit calls it on main.
 @MainActor
 private final class ReportSheetDelegate: NSObject, UISheetPresentationControllerDelegate {
     private let model: SheetDetentModel
@@ -386,13 +402,13 @@ private final class ReportSheetDelegate: NSObject, UISheetPresentationController
     }
 }
 
-/// 実体のある subview（ボタン等）以外のタッチをホストアプリへ通す `UIWindow`。
+/// A `UIWindow` that passes touches outside concrete subviews (e.g. buttons) through to the host app.
 @MainActor
 private final class PassthroughWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        // window 自身 / root view（透明な背景）に当たった = 何も載っていない領域。
-        // ホストへパススルーするため nil を返す。
+        // Hit the window itself / the root view (transparent background) = empty area with nothing
+        // mounted. Return nil to pass through to the host.
         if hit == self || hit == rootViewController?.view {
             return nil
         }
@@ -400,23 +416,26 @@ private final class PassthroughWindow: UIWindow {
     }
 }
 
-/// OS のスクショ/録画/ミラーリング、および自前 ReplayKit から内容を除外するためのオーバーレイ root view。
-/// `isSecureTextEntry` の `UITextField` が内部に持つ描画 canvas は OS キャプチャから除外されるため、
-/// 追加された実コンテンツ（FAB / トースト）をその canvas へ載せ替える（**非公式・iOS バージョン依存**）。
-/// canvas が取れない場合は通常 view として機能する（除外なしのフォールバック）。
-/// canvas は `secureField` 配下なので、配下を hitTest 可能にするため `secureField` も interactive にし、
-/// 空き領域は `hitTest` で nil を返して従来どおりホストへパススルーさせる。
+/// Overlay root view that excludes its content from OS screenshot/recording/mirroring and our own
+/// ReplayKit. A secure `isSecureTextEntry` `UITextField` keeps an internal render canvas that the OS
+/// excludes from capture, so we re-parent the added content (FAB / toast) onto that canvas
+/// (**undocumented, iOS-version-dependent**). If the canvas can't be obtained, it works as a normal
+/// view (no-exclusion fallback). Since the canvas lives under `secureField`, `secureField` is also
+/// made interactive so its descendants are hit-testable, and empty areas return nil from `hitTest`
+/// to keep passing through to the host.
 @MainActor
 private final class SecureOverlayRootView: UIView {
     private let secureField = UITextField()
-    /// 実コンテンツ（FAB / トースト）の常設コンテナ。これごと「除外 canvas」と「通常 view」の間で
-    /// 載せ替えることで、OS キャプチャへの写り込みを実行時に切り替える（子の状態は保たれる）。
+    /// Permanent container for the actual content (FAB / toast). Re-parenting this whole container
+    /// between the excluded canvas and the normal view toggles capture exclusion at runtime while
+    /// preserving the children's state.
     private let contentHost = UIView()
-    /// `secureField` 内部の描画 canvas（取得できなければ nil＝除外不可のフォールバック）。
+    /// `secureField`'s internal render canvas (nil if unobtainable = no-exclusion fallback).
     private var canvas: UIView?
 
-    /// 実コンテンツを OS キャプチャから除外するか。`true`（既定）＝除外 canvas に載せる／
-    /// `false`＝通常 view に載せて意図的に写す。canvas 未取得時は除外できず通常 view に載る。
+    /// Whether the content is excluded from OS capture. `true` (default) = mount on the excluded
+    /// canvas; `false` = mount on the normal view to intentionally show it. If the canvas isn't
+    /// obtained, exclusion is impossible and content mounts on the normal view.
     var excludesFromCapture: Bool = true {
         didSet { guard excludesFromCapture != oldValue else { return }; applyContentPlacement() }
     }
@@ -425,9 +444,9 @@ private final class SecureOverlayRootView: UIView {
         super.init(frame: frame)
         backgroundColor = .clear
         secureField.isSecureTextEntry = true
-        secureField.isUserInteractionEnabled = true       // 配下（canvas/contentHost）を hitTest 可能にする
+        secureField.isUserInteractionEnabled = true       // make descendants (canvas/contentHost) hit-testable
         secureField.backgroundColor = .clear
-        super.addSubview(secureField)                     // override を経由しない
+        super.addSubview(secureField)                     // bypass our addSubview override
         secureField.frame = bounds
         secureField.autoresizingMask = [.flexibleWidth, .flexibleHeight]
 
@@ -440,69 +459,69 @@ private final class SecureOverlayRootView: UIView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// `secureField` 内部の描画 canvas を解決する（取れた一度きり）。
+    /// Resolves `secureField`'s internal render canvas (once, when it becomes available).
     private func resolveCanvasIfNeeded() {
         guard canvas == nil, let c = secureField.subviews.first else { return }
         c.isUserInteractionEnabled = true
         c.frame = bounds
         c.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        c.subviews.forEach { $0.removeFromSuperview() }   // キャレット等の既存サブビューを除去
+        c.subviews.forEach { $0.removeFromSuperview() }   // strip existing subviews (caret etc.)
         canvas = c
-        applyContentPlacement()                            // canvas が取れたので望みの配置へ
+        applyContentPlacement()                            // canvas now available; apply desired placement
     }
 
-    /// `contentHost` を除外設定に応じて canvas（除外）／ self（写す）へ載せ替える。
+    /// Re-parents `contentHost` to the canvas (excluded) or self (visible) per the exclusion setting.
     private func applyContentPlacement() {
         if excludesFromCapture, let canvas {
-            canvas.addSubview(contentHost)                 // 除外 canvas 配下＝OS キャプチャから除外
+            canvas.addSubview(contentHost)                 // under the excluded canvas = excluded from OS capture
         } else {
-            super.addSubview(contentHost)                  // 通常 view 配下＝最前面で写る
+            super.addSubview(contentHost)                  // under the normal view = visible, frontmost
         }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        resolveCanvasIfNeeded()                            // 初期化時に未生成でもレイアウト後に拾う
+        resolveCanvasIfNeeded()                            // pick it up after layout if not yet created at init
     }
 
     override func addSubview(_ view: UIView) {
         if view === secureField || view === contentHost {
             super.addSubview(view)
         } else {
-            contentHost.addSubview(view)                   // 実コンテンツは常設コンテナへ
+            contentHost.addSubview(view)                   // actual content goes into the permanent container
         }
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        // 実コンテンツ以外（自身 / secureField / canvas / contentHost）に当たった＝空き領域 → nil でパススルー。
+        // Hit anything but actual content (self / secureField / canvas / contentHost) = empty area → nil to pass through.
         if hit == self || hit == secureField || hit == canvas || hit == contentHost { return nil }
         return hit
     }
 }
 
-/// `view` をセキュア root view にするための overlay 用 root コントローラ。
+/// Overlay root controller whose `view` is the secure root view.
 @MainActor
 private final class SecureOverlayRootController: UIViewController {
     override func loadView() { view = SecureOverlayRootView() }
 }
 
-/// トーストの内容。
+/// Toast content.
 enum ToastContent {
-    /// 進行中（オレンジのスピナー）。例:「記憶を辿っています…」。
+    /// In progress (orange spinner).
     case progress(String)
-    /// 失敗（赤アイコン＋青「再試行」）。自動では閉じない。
+    /// Failure (red icon + blue "retry"). Does not auto-dismiss.
     case failure(message: String, onRetry: () -> Void)
-    /// 情報（操作ヒント。一定時間で自動消去）。例:「長押しでレポート起動」。
+    /// Info (operation hint; auto-dismisses after a delay).
     case info(String)
 }
 
-/// overlay UI の状態。
+/// Overlay UI state.
 @MainActor
 private final class OverlayModel: ObservableObject {
     @Published var toast: ToastContent?
 
-    /// アニメーション差分用キー（`ToastContent` は Equatable でないため）。
+    /// Key for animation diffing (since `ToastContent` isn't Equatable).
     var toastKey: String {
         switch toast {
         case .progress(let m): return "p:\(m)"
@@ -513,7 +532,7 @@ private final class OverlayModel: ObservableObject {
     }
 }
 
-/// 画面下中央にトーストを出す overlay。失敗トーストの「再試行」だけタップを受ける。
+/// Overlay that shows the toast at bottom center. Only the failure toast's "retry" takes taps.
 private struct StatusOverlay: View {
     @ObservedObject var model: OverlayModel
 
@@ -524,13 +543,13 @@ private struct StatusOverlay: View {
                 ToastCapsule {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(FlashbackColor.action)              // オレンジのスピナー
+                        .tint(FlashbackColor.action)              // orange spinner
                     Text(message)
                 }
             case .failure(let message, let onRetry):
                 ToastCapsule {
                     Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(FlashbackColor.danger)   // 赤
+                        .foregroundStyle(FlashbackColor.danger)   // red
                     Text(message)
                     Button(action: onRetry) {
                         HStack(spacing: 2) {
@@ -538,14 +557,14 @@ private struct StatusOverlay: View {
                             Image(systemName: "chevron.right")
                                 .font(.system(size: 10, weight: .semibold))
                         }
-                        .foregroundStyle(FlashbackColor.settingsLink)   // 青
+                        .foregroundStyle(FlashbackColor.settingsLink)   // blue
                     }
                     .accessibilityLabel("再試行")
                 }
             case .info(let message):
                 ToastCapsule {
                     Image(systemName: "hand.tap")
-                        .foregroundStyle(FlashbackColor.action)   // オレンジ（長押し操作の誘導）
+                        .foregroundStyle(FlashbackColor.action)   // orange (cue toward the long-press gesture)
                     Text(message)
                 }
             case nil:
@@ -557,8 +576,8 @@ private struct StatusOverlay: View {
     }
 }
 
-/// トーストの反転背景色（dynamic UIColor・trait 解決でライブ切替に追従）。
-/// bg: ライト=ほぼ黒(20,20,24 @0.92) / ダーク=近白。fg はその反転。
+/// Toast's inverted background color (dynamic UIColor; follows live appearance changes via trait
+/// resolution). bg: light = near-black (20,20,24 @0.92) / dark = near-white. fg is its inverse.
 private enum ToastPalette {
     static let background = UIColor { trait in
         trait.userInterfaceStyle == .dark
@@ -572,7 +591,7 @@ private enum ToastPalette {
     }
 }
 
-/// トーストの共通カプセル（角丸20相当のピル・12pt・反転背景）。
+/// Shared toast capsule (pill with ~20pt corner radius, 12pt, inverted background).
 private struct ToastCapsule<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -581,7 +600,7 @@ private struct ToastCapsule<Content: View>: View {
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(Color(uiColor: ToastPalette.foreground))
             .lineLimit(1)
-            .fixedSize()                       // hosting view の横潰れ＝テキスト切れを防ぐ
+            .fixedSize()                       // prevent the hosting view's horizontal squish = text clipping
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
             .background(Color(uiColor: ToastPalette.background), in: Capsule())
@@ -589,15 +608,16 @@ private struct ToastCapsule<Content: View>: View {
     }
 }
 
-/// 画面最下部のシステムジェスチャ（ホームインジケータの横スワイプ＝アプリ切替や、上スワイプ）を
-/// 一拍遅延させるホスティングコントローラ。レポートのトリマー最下部に置いたキャプチャボタンを
-/// 下端でドラッグしても、OS のジェスチャに取られず（要・二度目のスワイプで発火）スクラブできる。
+/// Hosting controller that delays the bottom-edge system gestures (home-indicator side swipe = app
+/// switching, and the up swipe) by one beat. Lets the capture button at the bottom of the report's
+/// trimmer be scrubbed via bottom-edge dragging without the OS hijacking the gesture (it requires a
+/// second swipe to fire).
 private final class DeferBottomGesturesHostingController<Content: View>: UIHostingController<Content> {
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { .bottom }
 }
 
 #else
-/// UIKit / SwiftUI が無い環境（macOS ホストビルド等）向けの no-op スタブ。
+/// No-op stub for environments without UIKit / SwiftUI (e.g. macOS host builds).
 final class FlashbackPresenter {
     var onDeferredInstall: (() -> Void)?
     func install() {}

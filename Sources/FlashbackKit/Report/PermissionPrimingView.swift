@@ -1,27 +1,29 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
-/// 画面収録の許可プライミング（pre-permission）シート。
+/// Screen-recording permission priming (pre-permission) sheet.
 ///
-/// ReplayKit の許可システムアラートは本文・ボタンを**カスタムできない**（差し込めるのは
-/// アプリ表示名のみ）。そこで OS 確認を出す“前”に本シートで意味を橋渡しし、理解と許可率を上げる。
+/// ReplayKit's permission system alert **can't be customized** (only the app display name can be
+/// injected). So before the OS prompt appears, this sheet bridges the meaning to improve understanding
+/// and the grant rate.
 ///
-/// 提示は `.sheet` + `.presentationDetents([.medium])`（おやすみ ReportView の上）。
-/// 色ルール: ヒーローマークは**ブランドロゴ配色**（リング/針=ラベル色・くさび=オレンジ）。
-/// 塗りつぶしの CTA も同じオレンジで、操作の主役を視線で結ぶ。
-/// コピーは正本 priming.jsx の A 案（中立・説明型）。「不具合/バグ」表現は使わない。
+/// Presented as a `.sheet` with `.presentationDetents([.medium])` (over the dormant ReportView).
+/// Color rule: the hero mark uses the **brand-logo palette** (ring/hand = label color, wedge = orange);
+/// the filled CTA is the same orange, visually tying together the primary action.
+/// Copy is variant A (neutral, explanatory). Avoids "bug/defect" wording.
 struct PermissionPrimingView: View {
-    /// 「許可へ進む」: 呼び出し側で hasPrimed を立て、シートを閉じて録画再試行（OS 確認）へ繋ぐ。
+    /// "Proceed to allow": the caller sets `hasPrimed`, closes the sheet, and retries recording (OS prompt).
     let onProceed: () -> Void
-    /// 「あとで」: シートを閉じておやすみへ戻る（トースト無し）。
+    /// "Later": close the sheet and return to dormant (no toast).
     let onLater: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 8)
 
-            // ヒーロー: ブランドロゴ配色の Time Slice マーク。リング/針はラベル色（ライト=黒/ダーク=白）で
-            // くさびのオレンジを全周囲み、地に依らず輪郭がはっきり立つ。くさび＝オレンジで「時を切り取る」を示す。
+            // Hero: Time Slice mark in the brand-logo palette. The ring/hand use the label color
+            // (black in light, white in dark), encircling the orange wedge so the outline stands out on any
+            // background. The orange wedge conveys "slicing out a moment in time".
             TimeSliceMark.logo()
                 .frame(width: 46, height: 46)
                 .padding(.bottom, 16)
@@ -42,7 +44,7 @@ struct PermissionPrimingView: View {
 
             Spacer(minLength: 16)
 
-            // CTA: オレンジ塗り（録画を有効化する操作）。
+            // CTA: filled orange (the action that enables recording).
             Button(action: onProceed) {
                 Text("許可へ進む")
                     .font(.body.weight(.semibold))
@@ -54,7 +56,7 @@ struct PermissionPrimingView: View {
             .accessibilityLabel("許可へ進む")
             .accessibilityHint("iOS の画面収録の確認が表示されます")
 
-            // 「あとで」: 控えめなテキストボタン。
+            // "Later": muted text button.
             Button(action: onLater) {
                 Text("あとで")
                     .font(.callout)
@@ -65,7 +67,7 @@ struct PermissionPrimingView: View {
             .padding(.top, 10)
             .accessibilityLabel("あとで")
 
-            // ヒント: 次のタップで OS 確認が出ることを示す（mono・控えめ）。
+            // Hint that the next tap surfaces the OS prompt (mono, muted).
             HStack(spacing: 5) {
                 Image(systemName: "info.circle")
                     .font(.system(size: 12))

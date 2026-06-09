@@ -2,11 +2,12 @@
 import AVFoundation
 import UIKit
 
-/// DEBUG 専用: トリミング UX を Simulator で確認するための合成サンプル動画ジェネレータ。
+/// DEBUG-only: synthetic sample-clip generator for checking the trimming UX on the Simulator.
 ///
-/// ReplayKit の実録画は Simulator で動かないため、本物のクリップが手に入らない。
-/// 経過秒を大きく描画し背景色を時間で変える動画を合成することで、再生・トリム範囲の
-/// 効きを目視で確認できる。Release ビルドには含まれない。
+/// Real ReplayKit recording doesn't run on the Simulator, so no genuine clip is available.
+/// This synthesizes a video that draws the elapsed seconds large and shifts the background
+/// color over time, letting you visually confirm playback and trim-range behavior. Not
+/// included in Release builds.
 enum SampleClipMaker {
 
     static func make(seconds: Int = 12, fps: Int = 15) async throws -> URL {
@@ -42,12 +43,12 @@ enum SampleClipMaker {
                 UIColor(hue: hue, saturation: 0.55, brightness: 0.92, alpha: 1).setFill()
                 ctx.fill(CGRect(origin: .zero, size: size))
 
-                // 進行バー（左→右）。
+                // Progress bar (left -> right).
                 UIColor.white.withAlphaComponent(0.85).setFill()
                 let barX = CGFloat(t / Double(seconds)) * size.width
                 ctx.fill(CGRect(x: barX - 4, y: 0, width: 8, height: size.height))
 
-                // 経過秒テキスト。
+                // Elapsed-seconds text.
                 let text = String(format: "%.1fs", t) as NSString
                 let attrs: [NSAttributedString.Key: Any] = [
                     .font: UIFont.monospacedDigitSystemFont(ofSize: 110, weight: .bold),

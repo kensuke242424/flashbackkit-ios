@@ -5,28 +5,28 @@ import UIKit
 import ImageIO
 import UniformTypeIdentifiers
 
-/// 直前クリップのプレビュー＋範囲トリミング UI。
+/// Preview + range-trimming UI for the recording clip.
 ///
-/// プレビュー（`AVPlayerLayer`）の下にサムネイルのフィルムストリップを敷き、両端の
-/// ハンドルで保存範囲を選ぶ。選択範囲は秒で `selection` に双方向バインドする。
-/// 依存ゼロ（AVFoundation / SwiftUI / UIKit のみ）。
+/// Lays a thumbnail filmstrip under the preview (`AVPlayerLayer`); the two handles pick the
+/// selection range. The range (in seconds) is two-way bound to `selection`.
+/// Zero dependencies (AVFoundation / SwiftUI / UIKit only).
 @MainActor
 struct VideoTrimmerView: View {
     let url: URL
-    /// 選択範囲（秒）。`lowerBound == upperBound` の初期値を渡すと、尺確定後に全体へ広げる。
+    /// Selection range (seconds). Passing an initial value with `lowerBound == upperBound` widens to the full range once the duration is known.
     @Binding var selection: ClosedRange<Double>
-    /// プレビュー枠の最大高さ。ハーフモーダルでは小さく、展開時は大きく渡す。
+    /// Max height of the preview frame. Small in the half-modal, larger when expanded.
     var previewMaxHeight: CGFloat = 280
-    /// 再生ヘッド位置の 1 フレームをフル解像度で画像化し、共有用の一時ファイル URL を渡す。
-    /// `nil` ならカメラ（静止画キャプチャ）ボタンを出さない。
+    /// Renders the frame at the playhead at full resolution and hands back a temp-file URL for sharing.
+    /// When `nil`, the camera (still capture) button is hidden.
     var onCaptureStill: ((URL) -> Void)? = nil
-    /// キャプチャ時点のタイトル（レポート入力）を返す。クリップ共有と同様、ファイル名と
-    /// 画像メタデータの title へ反映する。入力途中の最新値を読むためクロージャで受ける。
+    /// Returns the title at capture time (report input). Like clip sharing, it feeds the file name and the
+    /// image metadata title. Taken as a closure so the latest in-progress value is read.
     var currentTitle: () -> String = { "" }
-    /// 画像メタデータの description に焼く端末情報（クリップ共有の mp4 description と同じ文字列）。
+    /// Device info burned into the image metadata description (same string as the clip share's mp4 description).
     var deviceDescription: String = ""
 
-    /// これ以上は詰められない最小選択長（秒）。
+    /// Minimum selection length (seconds); handles can't be squeezed past this.
     private let minimumDuration: Double = 1.0
 
     @State private var player = AVPlayer()
@@ -34,15 +34,15 @@ struct VideoTrimmerView: View {
     @State private var thumbnails: [UIImage] = []
     @State private var playhead: Double = 0
     @State private var isPlaying = false
-    /// 再生ヘッドをドラッグ中か。periodic observer の playhead 上書きを止め、指追従にする。
+    /// Whether the playhead is being dragged. Stops the periodic observer from overwriting the playhead so it follows the finger.
     @State private var isScrubbing = false
-    /// 静止画の書き出し中か。二度押し抑止＋ボタンをスピナー表示にする。
+    /// Whether a still is being written out. Guards against a double-tap and shows the button as a spinner.
     @State private var isCapturingStill = false
-    /// キャプチャ時にプレビューを一瞬白く光らせる「撮った感」用の不透明度（0→0.85→0）。
+    /// Opacity for the brief white "shutter" flash on capture (0 -> 0.85 -> 0).
     @State private var flashOpacity: Double = 0
     @State private var timeObserver: Any?
-    /// 動画の表示アスペクト比（幅/高さ）。尺確定時に実トラックから求め、プレビュー枠を
-    /// これに合わせることで黒帯（レターボックス）を出さない。確定までは縦動画想定の暫定値。
+    /// Display aspect ratio (width/height). Derived from the real track once the duration is known; matching the
+    /// preview frame to it avoids letterboxing. Provisional portrait value until then.
     @State private var videoAspect: CGFloat = 9.0 / 16.0
 
     var body: some View {
@@ -58,7 +58,7 @@ struct VideoTrimmerView: View {
                         if duration == 0 {
                             ProgressView().tint(.white)
                         } else if !isPlaying {
-                            // 一時停止中のポスター表示。タップ判定は映像エリア全体で受けるので非対話。
+                            // Paused-state poster. The whole video area handles taps, so this is non-interactive.
                             Image(systemName: "play.fill")
                                 .font(.title3)
                                 .foregroundStyle(.white)
@@ -67,14 +67,14 @@ struct VideoTrimmerView: View {
                                 .allowsHitTesting(false)
                         }
                     }
-                    // スクショ時の白フラッシュ（撮影合図）。映像形状にクリップ・非対話。
+                    // White shutter flash on capture. Clipped to the video shape, non-interactive.
                     .overlay {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(.white)
                             .opacity(flashOpacity)
                             .allowsHitTesting(false)
                     }
-                    // 映像エリア全体をタップで再生/一時停止トグル（再生中タップで停止できる）。
+                    // Tap anywhere on the video area to toggle play/pause (a tap while playing stops it).
                     .contentShape(RoundedRectangle(cornerRadius: 12))
                     .onTapGesture { if duration > 0 { togglePlay() } }
                     .accessibilityElement(children: .ignore)
@@ -87,7 +87,7 @@ struct VideoTrimmerView: View {
             }
 
             HStack(spacing: 12) {
-                // 小さな円形オレンジ再生ボタン（30pt）。
+                // Small round orange play button (30pt).
                 Button(action: togglePlay) {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 12, weight: .bold))
@@ -113,7 +113,7 @@ struct VideoTrimmerView: View {
                 onScrub: { seconds in seek(to: seconds) },
                 onScrubBegan: { beginScrub() },
                 onScrubEnded: { isScrubbing = false },
-                // 再生ヘッドの真下に追従するカメラボタンから静止画キャプチャを起動する。
+                // The camera button tracking just below the playhead triggers still capture.
                 onCapture: onCaptureStill != nil ? { captureStill() } : nil,
                 isCapturing: isCapturingStill
             )
@@ -132,7 +132,7 @@ struct VideoTrimmerView: View {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    // MARK: - 読み込み
+    // MARK: - Loading
 
     private func load() async {
         let asset = AVURLAsset(url: url)
@@ -143,19 +143,20 @@ struct VideoTrimmerView: View {
         player.replaceCurrentItem(with: AVPlayerItem(asset: asset))
         duration = seconds
         if selection.lowerBound >= selection.upperBound {
-            // 初回（未設定）: 選択を「中間点〜終端」にする（最低選択長は確保）。
-            // 再生ヘッド／プレビュー／カメラボタンは**録画の最後尾（最新の画面）**へ置く。最新フレームが
-            // そこなので「今の画面をそのままスクショ」がすぐできる。
+            // First load (unset): select "midpoint...end" (keeping the minimum length).
+            // Put the playhead / preview / camera button at the tail of the recording (the latest frame),
+            // so "screenshot the current screen as-is" works immediately.
             let start = max(0, min(seconds / 2, seconds - minimumDuration))
             selection = start...seconds
             seek(to: seconds)
         } else {
-            // 再ロード（設定へ push して戻る等で .task が再実行）: 選択は維持。replaceCurrentItem で
-            // 0 に戻った再生位置を直前のヘッド位置（選択範囲内へクランプ）へ復帰させる。これをしないと
-            // periodic observer が playhead を 0 に同期し、カメラボタンだけ左端へ飛ぶ（選択は中央のまま）。
+            // Reload (e.g. .task re-runs after pushing to settings and back): keep the selection.
+            // replaceCurrentItem reset the play position to 0; restore it to the last playhead (clamped into
+            // the selection). Otherwise the periodic observer syncs the playhead to 0 and only the camera button
+            // jumps to the left edge (the selection stays centered).
             seek(to: min(max(playhead, selection.lowerBound), selection.upperBound))
         }
-        // 実トラックから表示アスペクト比を求めてプレビュー枠を合わせる（黒帯を出さない）。
+        // Derive the display aspect ratio from the real track and match the preview frame (no letterboxing).
         if let track = try? await asset.loadTracks(withMediaType: .video).first,
            let natural = try? await track.load(.naturalSize),
            let transform = try? await track.load(.preferredTransform) {
@@ -186,14 +187,14 @@ struct VideoTrimmerView: View {
         thumbnails = images
     }
 
-    // MARK: - 再生
+    // MARK: - Playback
 
     private func togglePlay() {
         if isPlaying {
             player.pause()
             isPlaying = false
         } else {
-            // 再生ヘッドが選択範囲外なら先頭から。
+            // If the playhead is outside the selection, start from the beginning of it.
             if playhead < selection.lowerBound || playhead >= selection.upperBound {
                 seek(to: selection.lowerBound)
             }
@@ -209,31 +210,31 @@ struct VideoTrimmerView: View {
                     toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
-    // MARK: - 静止画キャプチャ
+    // MARK: - Still capture
 
-    /// 再生ヘッド位置の 1 フレームをフル解像度で抜き出し、PNG として一時ファイルに書いて共有へ渡す。
+    /// Extracts the frame at the playhead at full resolution, writes it as a PNG temp file, and hands it to sharing.
     ///
-    /// `AVAssetImageGenerator` の許容誤差を 0 にして、再生ヘッドが当たっている厳密なコマを取る
-    /// （サムネ生成は速度優先で誤差∞なのと対照的）。回転は `appliesPreferredTrackTransform` で正す。
-    /// 元が圧縮済み動画フレームなので、再 JPEG 圧縮で文字が滲まないよう PNG で書き出す。
+    /// Sets `AVAssetImageGenerator`'s tolerance to 0 to grab the exact frame the playhead is on (unlike thumbnail
+    /// generation, which uses infinite tolerance for speed). `appliesPreferredTrackTransform` corrects rotation.
+    /// The source is an already-compressed video frame, so write PNG to avoid re-JPEG smearing on text.
     private func captureStill() {
         guard duration > 0, !isCapturingStill else { return }
-        // 再生中なら止めて、見えているコマと書き出すコマを一致させる。
+        // If playing, pause so the visible frame matches the one written out.
         if isPlaying {
             player.pause()
             isPlaying = false
         }
-        playCaptureFeedback()   // 触覚＋プレビュー白フラッシュ（押した瞬間に「撮った感」を返す）
+        playCaptureFeedback()   // haptic + white preview flash (immediate "shutter" feedback)
         isCapturingStill = true
-        // 末尾ぴったり（duration）だと誤差0の generator がそのコマを取り損ねる（duration には表示中の
-        // フレームが無い）ので、僅かに内側へ寄せる。最後尾既定でも最新フレームを確実に取れる。
+        // Exactly at the tail (duration) the zero-tolerance generator misses the frame (there's no frame at
+        // duration), so nudge slightly inward. Ensures the latest frame is captured even at the default tail.
         let seconds = min(max(playhead, 0), max(duration - 0.05, 0))
         let time = CMTime(seconds: seconds, preferredTimescale: 600)
         let sourceURL = url
         let title = currentTitle()
         let description = deviceDescription
-        // VideoTrimmerView は @MainActor なので、この Task も MainActor 隔離を継承する
-        // （UIImage/CGImage を隔離跨ぎさせない＝既知の Sendable 罠を踏まない）。
+        // VideoTrimmerView is @MainActor, so this Task inherits MainActor isolation
+        // (keeps UIImage/CGImage from crossing isolation, i.e. avoids the known Sendable pitfall).
         Task {
             defer { isCapturingStill = false }
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: sourceURL))
@@ -243,15 +244,15 @@ struct VideoTrimmerView: View {
             guard let cg = try? await generator.image(at: time).image else { return }
             let fileURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent(stillFileName(at: seconds, title: title))
-            try? FileManager.default.removeItem(at: fileURL)   // 同名衝突を避ける
+            try? FileManager.default.removeItem(at: fileURL)   // avoid same-name collision
             guard writeTitledPNG(cg, title: title, description: description, to: fileURL) else { return }
             onCaptureStill?(fileURL)
         }
     }
 
-    /// キャプチャの手応え。触覚（軽い衝撃）＋プレビューの白フラッシュ。
-    /// フラッシュは一旦点灯を確定させてから次フレームで減衰させる（同一ループで 0.85→0 を書くと
-    /// 中間の 0.85 が描画されず光らないため、減衰だけ非同期にずらす）。
+    /// Capture feedback: haptic (light impact) + white preview flash.
+    /// Commit the lit state first, then decay on the next frame: writing 0.85 -> 0 in one loop never renders
+    /// the intermediate 0.85 (so no flash), so the decay is deferred asynchronously.
     private func playCaptureFeedback() {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         flashOpacity = 0.85
@@ -260,9 +261,9 @@ struct VideoTrimmerView: View {
         }
     }
 
-    /// 共有ファイル名。クリップ共有とタイトル挿入仕様を揃える：
-    /// - タイトル有り: `<無害化タイトル>-<タイムコード>.png`（点なのでどのコマか分かるよう時刻を添える）
-    /// - タイトル空: `flashback-screenshot-<日時>.png`（クリップの `flashback-video-...` と種別だけ違う）
+    /// Share file name, kept consistent with the clip share's title convention:
+    /// - With title: `<sanitized title>-<timecode>.png` (a still is one moment, so the time tells which frame).
+    /// - Empty title: `flashback-screenshot-<timestamp>.png` (only the kind differs from the clip's `flashback-video-...`).
     private func stillFileName(at seconds: Double, title: String) -> String {
         guard !title.isEmpty else { return "\(ClipTrimmer.fallbackName(kind: "screenshot")).png" }
         let total = Int(seconds.rounded())
@@ -270,8 +271,8 @@ struct VideoTrimmerView: View {
         return "\(ClipTrimmer.sanitizedFileName(title))-\(stamp).png"
     }
 
-    /// PNG を title / description 付きで書き出す。クリップの mp4 メタデータと役割を揃える：
-    /// title=タイトル（有る時のみ）／description=端末情報（常時）。PNG の tEXt（iTXt/XMP）へ埋め込む。
+    /// Writes a PNG with title / description, mirroring the clip's mp4 metadata roles:
+    /// title = title (only when present), description = device info (always). Embedded into PNG tEXt (iTXt/XMP).
     private func writeTitledPNG(_ cgImage: CGImage, title: String, description: String, to url: URL) -> Bool {
         guard let dest = CGImageDestinationCreateWithURL(
             url as CFURL, UTType.png.identifier as CFString, 1, nil
@@ -284,7 +285,7 @@ struct VideoTrimmerView: View {
         return CGImageDestinationFinalize(dest)
     }
 
-    /// 再生ヘッドのドラッグ開始（冪等）。再生中なら一時停止し、observer の上書きを止める。
+    /// Begin a playhead drag (idempotent). Pauses if playing and stops the observer from overwriting the playhead.
     private func beginScrub() {
         guard !isScrubbing else { return }
         isScrubbing = true
@@ -298,14 +299,14 @@ struct VideoTrimmerView: View {
         guard timeObserver == nil else { return }
         let interval = CMTime(seconds: 0.03, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            // periodic observer は @Sendable closure。MainActor 隔離の State へは Task で戻す。
+            // The periodic observer is a @Sendable handler; hop back to MainActor-isolated state via Task.
             let seconds = CMTimeGetSeconds(time)
             Task { @MainActor in
-                // スクラブ中は指追従を優先（observer は playhead を上書きしない）。
+                // While scrubbing, finger-follow wins (the observer doesn't overwrite the playhead).
                 guard !isScrubbing else { return }
                 playhead = seconds
-                // 選択範囲の終端で始点へ戻して一時停止（▶表示・1タップで再生し直せる）。
-                // upperBound==duration だと AVPlayer が実終端で自動停止するので pause()/isPlaying も明示で倒す。
+                // At the selection's end, loop to its start and pause (shows play, one tap replays).
+                // When upperBound == duration, AVPlayer auto-pauses at the real end, so set pause()/isPlaying explicitly too.
                 if isPlaying, seconds >= selection.upperBound {
                     seek(to: selection.lowerBound)
                     player.pause()
@@ -325,7 +326,7 @@ struct VideoTrimmerView: View {
     }
 }
 
-/// `AVPlayerLayer` を SwiftUI に橋渡しする最小ビュー（既定コントロール無し）。
+/// Minimal view bridging `AVPlayerLayer` into SwiftUI (no default controls).
 private struct PlayerLayerView: UIViewRepresentable {
     let player: AVPlayer
 
@@ -346,7 +347,7 @@ private struct PlayerLayerView: UIViewRepresentable {
     }
 }
 
-/// サムネイルのフィルムストリップ＋両端ハンドル＋再生ヘッド。
+/// Thumbnail filmstrip + the two handles + the playhead.
 private struct FilmstripTrimmer: View {
     let thumbnails: [UIImage]
     let duration: Double
@@ -354,23 +355,23 @@ private struct FilmstripTrimmer: View {
     let playhead: Double
     @Binding var selection: ClosedRange<Double>
     let onScrub: (Double) -> Void
-    /// 再生ヘッドのドラッグ開始（冪等）／終了。スクラブ中の一時停止・observer 抑制を親に伝える。
+    /// Playhead drag begin (idempotent) / end. Tells the parent to pause and suppress the observer while scrubbing.
     var onScrubBegan: () -> Void = {}
     var onScrubEnded: () -> Void = {}
-    /// 再生ヘッド真下のカメラボタンのタップ＝静止画キャプチャ起動。`nil` なら追従トラックを出さない。
+    /// Tap on the camera button below the playhead triggers still capture. When `nil`, the tracking track is hidden.
     var onCapture: (() -> Void)? = nil
-    /// キャプチャ書き出し中。ボタンをスピナー表示にして二度押しを止める。
+    /// Still is being written out. Shows the button as a spinner and blocks a double-tap.
     var isCapturing: Bool = false
 
-    /// カメラボタンに指が触れている間 true。押下中だけ少し膨らませて手応えを返す
-    /// （指を離すと gesture 終了で自動的に false へ戻り、スプリングでポンと戻る）。
+    /// True while a finger is on the camera button. Swells it slightly while pressed for feedback
+    /// (releasing ends the gesture, which resets this to false and springs it back).
     @GestureState private var isPressingCapture = false
 
     private let handleWidth: CGFloat = 14
-    /// ハンドルの透明ヒット域（見た目より広く取り、スクラブ面より確実に掴めるようにする）。
+    /// Transparent hit area for the handle (wider than its look so it grabs more reliably than the scrub surface).
     private let handleHitWidth: CGFloat = 34
     private let stripHeight: CGFloat = 56
-    /// キャプチャボタン（キャレット6＋丸34＝40）にぴったりの高さ。下の余白を抑える。
+    /// Height fitting the capture button exactly (caret 6 + circle 34 = 40). Keeps the bottom padding tight.
     private let captureTrackHeight: CGFloat = 40
 
     var body: some View {
@@ -383,7 +384,7 @@ private struct FilmstripTrimmer: View {
         }
     }
 
-    /// サムネ＋両端ハンドル＋再生ヘッドの本体バー（高さ固定）。
+    /// The main bar: thumbnails + the two handles + the playhead (fixed height).
     private var filmstripBar: some View {
         GeometryReader { geo in
             let width = geo.size.width
@@ -395,16 +396,16 @@ private struct FilmstripTrimmer: View {
             ZStack(alignment: .leading) {
                 filmstrip(width: width, height: height)
 
-                // 選択外を暗く。
+                // Dim outside the selection.
                 dim(width: startX, height: height)
                 dim(width: width - endX, height: height).offset(x: endX)
 
-                // 再生ヘッドの見た目（オレンジのクリップバーより**背面**・非対話。細い縦バー＋上部ノブ）。
+                // Playhead visual (behind the orange clip bar, non-interactive: thin vertical bar).
                 if duration > 0 {
                     playheadVisual(at: handleWidth + xOffset(for: playhead, usable: usable), height: height)
                 }
 
-                // 選択枠: 背景色の外輪（2pt）＋アクション色の枠（2.5pt）。
+                // Selection frame: background-color outer ring (2pt) + action-color border (2.5pt).
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(FlashbackColor.background, lineWidth: 6)
                     .frame(width: max(endX - startX, 0), height: height)
@@ -414,8 +415,8 @@ private struct FilmstripTrimmer: View {
                     .frame(width: max(endX - startX, 0), height: height)
                     .offset(x: startX)
 
-                // 再生ヘッドのグラブ（ヘッド上の小さめ領域）。**ハンドルより後ろ（下の z 順）**に置き、
-                // クリップバー（トリム）を主役・最優先に。再生ヘッドはハンドルに重ならない所で次点で掴める。
+                // Playhead grab (a small area over the head). Placed behind the handles (lower z order) so the
+                // clip bar (trim) stays primary; the playhead is grabbable as a fallback where it doesn't overlap a handle.
                 if duration > 0 {
                     playheadGrab(at: handleWidth + xOffset(for: playhead, usable: usable),
                                  height: height, usable: usable)
@@ -430,9 +431,9 @@ private struct FilmstripTrimmer: View {
         }
     }
 
-    /// 再生ヘッドの真下に追従するカメラボタン（上向きキャレットで「この位置を撮る」を示す）。
-    /// x マッピングはストリップと同一（全幅・同 `handleWidth`）なのでヘッド直下に揃う。
-    /// 端ではボタンが見切れぬよう、ボタン中心を半径ぶんクランプする。
+    /// Camera button tracking just below the playhead (an up caret signals "capture this position").
+    /// Uses the same x mapping as the strip (full width, same `handleWidth`), so it lines up under the head.
+    /// Clamps the button center by its radius so it isn't clipped at the edges.
     private var captureTrack: some View {
         GeometryReader { geo in
             let width = geo.size.width
@@ -441,9 +442,9 @@ private struct FilmstripTrimmer: View {
             let radius: CGFloat = 17
             let cx = min(max(headX, radius), width - radius)
             CaptureHeadButton(isCapturing: isCapturing)
-                .scaleEffect(isPressingCapture ? 1.14 : 1.0)   // 押下中は少し膨張（手応え）
+                .scaleEffect(isPressingCapture ? 1.14 : 1.0)   // swell slightly while pressed (feedback)
                 .animation(.spring(response: 0.26, dampingFraction: 0.55), value: isPressingCapture)
-                .padding(.horizontal, 8)             // ドラッグしやすいよう左右の当たり判定を広げる
+                .padding(.horizontal, 8)             // widen the horizontal hit area for easier dragging
                 .contentShape(Rectangle())
                 .position(x: cx, y: 20)
                 .gesture(captureGesture(usable: usable))
@@ -458,13 +459,13 @@ private struct FilmstripTrimmer: View {
         .disabled(duration == 0)
     }
 
-    /// カメラボタンの操作。横ドラッグ＝再生位置の調整（スクラブ）、ほぼ動かさず離す＝タップ＝キャプチャ。
-    /// 再生ヘッドのグラブ（`playheadGrab`）と同じ秒換算で、選択範囲内へクランプする。
+    /// Camera button gesture. Horizontal drag = scrub the play position; release with almost no movement = tap = capture.
+    /// Uses the same seconds conversion as the playhead grab (`playheadGrab`) and clamps into the selection.
     private func captureGesture(usable: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .named("captureTrack"))
             .updating($isPressingCapture) { _, pressing, _ in pressing = true }
             .onChanged { value in
-                // 微小なブレはタップ判定に残すため、少し動いてからスクラブを始める。
+                // Keep tiny jitter as a tap; start scrubbing only after some movement.
                 guard abs(value.translation.width) > 3 else { return }
                 onScrubBegan()
                 let seconds = secondsForX(value.location.x - handleWidth, usable: usable)
@@ -477,7 +478,7 @@ private struct FilmstripTrimmer: View {
             }
     }
 
-    /// 高さを明示しオーバーフローさせない（縛らないと .fill が縦に溢れて下の UI に被る）。
+    /// Pin the height to prevent overflow (without it, .fill spills vertically and covers the UI below).
     private func filmstrip(width: CGFloat, height: CGFloat) -> some View {
         let count = max(thumbnails.count, 1)
         let cellWidth = width / CGFloat(count)
@@ -504,8 +505,8 @@ private struct FilmstripTrimmer: View {
             .allowsHitTesting(false)
     }
 
-    /// 指の絶対位置（"strip" 座標）で追従するハンドル。translation 累積のドリフトを避ける。
-    /// 見た目は `handleWidth`、ヒット域は広め（`handleHitWidth`）にしてスクラブ面より確実に掴める。
+    /// Handle that follows the finger's absolute position ("strip" coords), avoiding accumulated-translation drift.
+    /// Looks `handleWidth` wide but has a wider hit area (`handleHitWidth`) so it grabs more reliably than the scrub surface.
     private func handle(at x: CGFloat, height: CGFloat, usable: CGFloat, isStart: Bool) -> some View {
         RoundedRectangle(cornerRadius: 4)
             .fill(FlashbackColor.action)
@@ -513,7 +514,7 @@ private struct FilmstripTrimmer: View {
             .overlay(
                 Capsule().fill(FlashbackColor.onAction).frame(width: 3, height: 18)
             )
-            .frame(width: handleHitWidth, height: height)   // 透明な広いヒット域（見た目は中央の handleWidth）
+            .frame(width: handleHitWidth, height: height)   // wide transparent hit area (visual is the centered handleWidth)
             .contentShape(Rectangle())
             .offset(x: x - handleHitWidth / 2)
             .accessibilityLabel(isStart ? "開始位置" : "終了位置")
@@ -536,7 +537,7 @@ private struct FilmstripTrimmer: View {
             )
     }
 
-    /// 再生ヘッドの見た目（細い縦バーのみ）。非対話（グラブは別レイヤ）。
+    /// Playhead visual (thin vertical bar only). Non-interactive (the grab is a separate layer).
     private func playheadVisual(at x: CGFloat, height: CGFloat) -> some View {
         Rectangle()
             .fill(FlashbackColor.label)
@@ -545,9 +546,9 @@ private struct FilmstripTrimmer: View {
             .allowsHitTesting(false)
     }
 
-    /// 再生ヘッドのグラブ（ヘッド上の小さめ領域）。位置は選択範囲内へクランプして seek。
-    /// ハンドル（広いヒット域・上の z 順）に重なる箇所ではトリムが優先される＝クリップバーが主役。
-    /// グラブ幅はハンドルのヒット域より狭くして、重なり時はハンドルが確実に勝つようにする。
+    /// Playhead grab (a small area over the head). Clamps the position into the selection and seeks.
+    /// Where it overlaps a handle (wide hit area, higher z order), trim wins so the clip bar stays primary.
+    /// The grab is narrower than the handle's hit area so the handle reliably wins on overlap.
     private func playheadGrab(at x: CGFloat, height: CGFloat, usable: CGFloat) -> some View {
         let grabWidth: CGFloat = 26
         return Color.clear
@@ -573,7 +574,7 @@ private struct FilmstripTrimmer: View {
             }
     }
 
-    /// 選択範囲内へクランプ（トリム外へは出さない）。
+    /// Clamp into the selection range (never outside the trim).
     private func clampToSelection(_ seconds: Double) -> Double {
         min(max(seconds, selection.lowerBound), selection.upperBound)
     }
@@ -594,9 +595,9 @@ private struct FilmstripTrimmer: View {
     }
 }
 
-/// 再生ヘッド直下に置くキャプチャボタンの見た目（上向きキャレット＋カメラ丸ボタン）。
-/// アウトライン（背景色で塗り＋アクション色の枠）で、塗りの再生ボタンと役割を分ける。
-/// 操作（タップ＝キャプチャ／横ドラッグ＝スクラブ）は親の `captureTrack` 側でまとめて扱う。
+/// Visual of the capture button sitting under the playhead (up caret + round camera button).
+/// Outlined (background-color fill + action-color border) to distinguish it from the filled play button.
+/// Interaction (tap = capture / horizontal drag = scrub) is handled together by the parent `captureTrack`.
 private struct CaptureHeadButton: View {
     let isCapturing: Bool
 
@@ -624,7 +625,7 @@ private struct CaptureHeadButton: View {
     }
 }
 
-/// 上向き三角（キャレット）。再生ヘッドの方向を指す目印。
+/// Up-pointing triangle (caret) marking the playhead direction.
 private struct CaretUp: Shape {
     func path(in rect: CGRect) -> Path {
         var p = Path()

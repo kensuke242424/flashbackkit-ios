@@ -1,15 +1,15 @@
 import SwiftUI
 import FlashbackKit
 
-/// FlashbackKit の仮UIループを確認するためのホスト画面。
+/// Host screen for exercising FlashbackKit's report loop.
 ///
-/// 起動時に `Flashback.start()` を呼ぶと、SDK が overlay window に
-/// 既定トリガ（シェイク / フローティングボタン）を仕込む。
-/// いずれかのトリガ → ReportView → タイトル入力 → 共有 でループが回る。
+/// Calling `Flashback.start()` at launch makes the SDK install the default triggers
+/// (shake / floating button) on its overlay window.
+/// Any trigger → ReportView → title input → share runs the loop.
 ///
-/// 録画の成否を確認しやすいよう、画面に「動き」を用意している:
-/// - ホームタブ … 常時アニメーションするオブジェクト＋経過時間
-/// - タブ切替・各タブのスクロール … 画面遷移が録画クリップに明確に残る
+/// To make recording easy to verify, the screen provides visible "motion":
+/// - Home tab … a continuously animating object + elapsed time
+/// - Tab switches / per-tab scrolling … screen transitions show up clearly in the clip
 struct ContentView: View {
     @State private var startDate = Date()
 
@@ -27,13 +27,13 @@ struct ContentView: View {
             #endif
         }
         .onAppear {
-            // triggers 未指定なので既定（シェイク + フローティングボタン）。
-            // Example は SDK の UI/挙動をシミュレータでも確認したいので runsOnSimulator=true。
-            // （実ホストの既定は false ＝シムでは起動しない。）
+            // triggers unspecified, so the defaults (shake + floating button) apply.
+            // The Example sets runsOnSimulator=true to check the SDK's UI/behavior on the Simulator too.
+            // (A real host defaults to false = doesn't start on the Sim.)
             Flashback.start(
                 configuration: .init(runsOnSimulator: true),
-                // ハンドオフ: 録画→トリム→共有まで終えた成果物がここに届く。
-                // AI 要約・Slack 送信・自社連携はホスト側で自由に（ここでは demo としてログ出力）。
+                // Handoff: the finished artifact (recorded → trimmed → shared) arrives here.
+                // AI summary / Slack delivery / your own integration go host-side (logged here as a demo).
                 onReport: { report in
                     print("[Flashback] onReport: \(report.device.displayModel) / \(report.title)")
                     if let clip = report.clipURL {
@@ -48,7 +48,7 @@ struct ContentView: View {
     }
 
     #if DEBUG
-    /// 環境変数で指定された状態を起動直後に自動提示する（Simulator / 自動検証用）。
+    /// Auto-presents a state specified via environment variable right after launch (for Simulator / automated checks).
     static func presentDemosFromEnvironment() {
         let env = ProcessInfo.processInfo.environment
         func after(_ delay: TimeInterval, _ action: @escaping () -> Void) {
@@ -66,9 +66,9 @@ struct ContentView: View {
     #endif
 }
 
-// MARK: - ホームタブ
+// MARK: - Home tab
 
-/// 起動状況・常時アニメーション・デバッグ入口を載せたホーム。
+/// Home screen with launch status, a continuous animation, and debug entry points.
 private struct HomeTab: View {
     let startDate: Date
 
@@ -78,12 +78,12 @@ private struct HomeTab: View {
                 Text("FlashbackKit Example")
                     .font(.title2.bold())
 
-                // 録画動作確認用の常時アニメーション（横移動＋回転＋色変化）。
+                // Continuous animation for verifying recording (horizontal move + rotation + color change).
                 MotionDemo(start: startDate)
                     .frame(height: 84)
                     .padding(.horizontal, 24)
 
-                // 起動からの経過時間（mm:ss.SSS）。20fps で更新。動きの時刻づけ用。
+                // Elapsed time since launch (mm:ss.SSS). Updates at 20fps; timestamps the motion.
                 TimelineView(.periodic(from: startDate, by: 0.05)) { context in
                     Text(Self.elapsedString(from: startDate, to: context.date))
                         .font(.system(size: 34, weight: .bold, design: .monospaced))
@@ -102,7 +102,7 @@ private struct HomeTab: View {
                     .multilineTextAlignment(.center)
 
                 #if DEBUG
-                // 録画状態の実機観察用 HUD（割り込み検知の挙動確認）。0.25秒更新。
+                // On-device HUD for observing recording state (interruption-detection behavior). Updates every 0.25s.
                 TimelineView(.periodic(from: startDate, by: 0.25)) { _ in
                     Text(Flashback.debugRecordingStatusLine())
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
@@ -117,7 +117,7 @@ private struct HomeTab: View {
         }
     }
 
-    /// 経過時間を mm:ss.SSS に整形する。
+    /// Formats elapsed time as mm:ss.SSS.
     private static func elapsedString(from start: Date, to now: Date) -> String {
         let elapsed = max(0, now.timeIntervalSince(start))
         let minutes = Int(elapsed) / 60
@@ -127,9 +127,9 @@ private struct HomeTab: View {
     }
 }
 
-// MARK: - ダミーUIタブ（録画に画面遷移を残すため）
+// MARK: - Dummy UI tabs (to leave screen transitions in the recording)
 
-/// スクロールするダミー一覧。タブ切替＋スクロールで録画に動きが残る。
+/// Scrolling dummy list. Tab switches + scrolling leave motion in the recording.
 private struct DummyListTab: View {
     private let symbols = ["star.fill", "bell.fill", "bolt.fill", "leaf.fill", "flame.fill",
                            "drop.fill", "moon.fill", "heart.fill", "cloud.fill", "sun.max.fill"]
@@ -153,7 +153,7 @@ private struct DummyListTab: View {
     }
 }
 
-/// 色付きカードのグリッド。スクロールで動きが出る。
+/// Grid of colored cards. Scrolling produces motion.
 private struct DummyGalleryTab: View {
     private let columns = [GridItem(.adaptive(minimum: 100), spacing: 12)]
     var body: some View {
@@ -178,11 +178,11 @@ private struct DummyGalleryTab: View {
     }
 }
 
-// MARK: - デバッグタブ（各状態の即プレビュー・DEBUG 限定）
+// MARK: - Debug tab (instant preview of each state; DEBUG only)
 
 #if DEBUG
-/// 各 ReportView 状態 / 設定 / プライミングを即プレビューする開発用入口を集約したタブ。
-/// ホームをすっきり保つため、これらはここへ寄せる（env 変数でも起動直後に提示可能）。
+/// Tab gathering dev entry points that instantly preview each ReportView state / settings / priming.
+/// Kept here to keep Home tidy (also presentable right after launch via env vars).
 private struct DebugTab: View {
     @State private var resetNote: String?
 
@@ -190,8 +190,8 @@ private struct DebugTab: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 12) {
-                    // Simulator では ReplayKit 実録画が動かないため、合成サンプル動画で
-                    // トリミング UX を確認する入口。
+                    // ReplayKit can't actually record on the Simulator, so this entry checks
+                    // the trimming UX with a synthetic sample video.
                     Button {
                         Flashback.debugPresentSampleReport()
                     } label: {
@@ -232,8 +232,8 @@ private struct DebugTab: View {
                     }
                     .buttonStyle(.bordered)
 
-                    // 一度だけ出るプライミング（事前説明）の既読フラグをリセットし、初回フローを再テストする。
-                    // リセット後は録画オフ（グレー）状態で FAB をタップすると再び表示される。
+                    // Reset the once-only priming read flag to re-test the first-run flow.
+                    // After reset, tapping the FAB while recording is off (gray) shows it again.
                     Button(role: .destructive) {
                         Flashback.debugResetPriming()
                         resetNote = "プライミング既読をリセットしました。録画オフ（グレー）の FAB をタップで再表示。"
@@ -259,8 +259,8 @@ private struct DebugTab: View {
                     }
                     .buttonStyle(.bordered)
 
-                    // 一度だけ出るシェイク案内（端末1回）の既読フラグをリセットし、初回提示を再テストする。
-                    // リセット後は設定でフローティングボタン表示を OFF にした直後に再び自動提示される。
+                    // Reset the once-only shake-hint read flag (once per device) to re-test the first presentation.
+                    // After reset, it auto-presents again right after turning off the floating button in settings.
                     Button(role: .destructive) {
                         Flashback.debugResetShakeHint()
                         resetNote = "シェイク案内の既読をリセットしました。設定で FAB 表示を OFF にすると再表示。"
@@ -292,13 +292,13 @@ private struct DebugTab: View {
 }
 #endif
 
-// MARK: - 常時アニメーション
+// MARK: - Continuous animation
 
-/// 録画動作確認用の常時アニメーション（Example 専用）。
+/// Continuous animation for verifying recording (Example-only).
 ///
-/// 横移動（三角波バウンド）＋回転＋色相サイクルの3要素を持たせ、録画クリップの
-/// どの瞬間を切り取っても「動いている」ことが一目で分かるようにする。
-/// `TimelineView(.animation)` で表示リフレッシュに同期して滑らかに動かす。
+/// Combines three elements — horizontal movement (triangle-wave bounce) + rotation + hue cycle —
+/// so any frame of the clip makes it obvious at a glance that things are "moving".
+/// Driven by `TimelineView(.animation)` to animate smoothly in sync with display refresh.
 private struct MotionDemo: View {
     let start: Date
 
@@ -307,15 +307,15 @@ private struct MotionDemo: View {
             let t = context.date.timeIntervalSince(start)
             let period = 2.4
             let phase = t.truncatingRemainder(dividingBy: period) / period   // 0..1
-            let tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2               // 0→1→0（左右バウンド）
-            let hue = (t / 6).truncatingRemainder(dividingBy: 1)             // 色相を 6 秒周期で一巡
+            let tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2               // 0→1→0 (left/right bounce)
+            let hue = (t / 6).truncatingRemainder(dividingBy: 1)             // cycle hue once every 6 seconds
 
             GeometryReader { geo in
                 let size: CGFloat = 60
                 let x = (geo.size.width - size) * tri
                 let y = (geo.size.height - size) / 2
                 ZStack(alignment: .topLeading) {
-                    // 走行レーン（位置変化を分かりやすく）。
+                    // Running lane (makes the position change easy to see).
                     Capsule()
                         .fill(Color(.secondarySystemBackground))
                         .frame(height: 6)
@@ -326,10 +326,10 @@ private struct MotionDemo: View {
                         .fill(Color(hue: hue, saturation: 0.75, brightness: 0.9))
                         .frame(width: size, height: size)
                         .overlay(
-                            Image(systemName: "location.north.fill")     // 向きで回転が見える
+                            Image(systemName: "location.north.fill")     // rotation is visible via the heading
                                 .font(.system(size: 24, weight: .bold))
                                 .foregroundStyle(.white)
-                                .rotationEffect(.degrees(t * 120))        // 1.33 回転/秒
+                                .rotationEffect(.degrees(t * 120))        // 1.33 rotations/sec
                         )
                         .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
                         .offset(x: x, y: y)
