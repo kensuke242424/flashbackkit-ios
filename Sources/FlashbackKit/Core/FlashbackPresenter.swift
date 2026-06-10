@@ -43,6 +43,27 @@ final class FlashbackPresenter {
     private var reportDetent: SheetDetentModel?
     /// Delegate observing the sheet's detent changes. Strongly retained to keep it alive.
     private var reportSheetDelegate: ReportSheetDelegate?
+
+    /// Drives the report-window backdrop from the sheet's *live* height every frame while the
+    /// report is presented (nil otherwise). Started on present, stopped on every dismiss path.
+    ///
+    /// Why a display link instead of the detent-change delegate: the earlier event-driven sync
+    /// (issue #20 follow-up) only fired on `sheetPresentationControllerDidChangeSelectedDetentIdentifier`,
+    /// which lands **once, at settle**. The presenting card, however, recedes continuously in step
+    /// with the drag, so the black backdrop snapped in at the end while the card-shrink artifact was
+    /// already visible mid-drag — a verified mismatch in a real screen recording. Reading the sheet's
+    /// presentation-layer frame each frame makes the backdrop track the recede progress instead.
+    private var backdropDisplayLink: CADisplayLink?
+    /// Weak proxy target for the display link, so the link never retains the presenter
+    /// (CADisplayLink retains its target; routing through a weak proxy avoids the retain cycle and
+    /// the proxy is harmless if a stop is ever missed).
+    private var backdropLinkProxy: DisplayLinkProxy?
+    /// Resolved height of the half (collapsed) detent, captured in the custom detent resolver.
+    /// `nil` until the first resolve. Re-captured on every layout (rotation / size change).
+    private var reportHalfDetentHeight: CGFloat?
+    /// The sheet's maximum detent value (`.large` height), captured in the custom detent resolver
+    /// alongside the half height so progress is evaluated against the live geometry.
+    private var reportMaxDetentValue: CGFloat?
     /// Generation counter for auto-dismissing info toasts, so a stale timer never
     /// clears a newer toast.
     private var infoToastGeneration = 0
@@ -144,11 +165,11 @@ final class FlashbackPresenter {
     /// Tears down the overlay window.
     func uninstall() {
         sceneObserver = nil                                        // cancel any pending scene-wait observation
+        stopReportBackdropTracking()                               // stop the link + clear the window before teardown
         reportHost?.dismiss(animated: false)
         reportHost = nil
         reportSheetDelegate = nil
         reportDetent = nil
-        window?.backgroundColor = .clear                           // fail-safe: never leave the window blacked out on teardown
         window?.isHidden = true
         window = nil
     }
@@ -189,20 +210,26 @@ final class FlashbackPresenter {
             // hiding the title input below so there's no hint of "more below". A slightly
             // taller custom detent lets it peek through (and also lifts the bottom capture
             // button clear of the bottom system-gesture band).
-            let halfDetent = UISheetPresentationController.Detent.custom(identifier: Self.halfDetentID) { context in
+            let halfDetent = UISheetPresentationController.Detent.custom(identifier: Self.halfDetentID) { [weak self] context in
                 // 0.58 of the available height, but never below `halfDetentFloor` (so the filmstrip,
                 // capture button, and title peek stay visible on short phones like iPhone SE), and
                 // never above the maximum. On tall phones 0.58 already wins, so they don't change.
-                min(context.maximumDetentValue, max(context.maximumDetentValue * 0.58, Self.halfDetentFloor))
+                let resolved = min(context.maximumDetentValue, max(context.maximumDetentValue * 0.58, Self.halfDetentFloor))
+                // Stash the resolved half height and the max (`.large`) value for the backdrop
+                // progress math. The resolver is re-invoked on every layout (rotation / size change),
+                // so these stay current without any extra observers.
+                self?.reportHalfDetentHeight = resolved
+                self?.reportMaxDetentValue = context.maximumDetentValue
+                return resolved
             }
             sheet.detents = [halfDetent, .large()]
             sheet.selectedDetentIdentifier = Self.halfDetentID   // start at half (height that peeks the title)
             sheet.prefersGrabberVisible = true            // grabber hinting that it opens on swipe up
+            // The delegate now only mirrors the detent into SheetDetentModel (its original role).
+            // The window backdrop is driven separately, every frame, by the display link.
             let delegate = ReportSheetDelegate(
                 model: detent,
-                onDetentChange: { [weak self] isLarge in self?.setReportBackdrop(forLargeDetent: isLarge, animated: true) },
-                onWillDismiss: { [weak self] coordinator in self?.handleReportWillDismiss(with: coordinator) },
-                onDidDismiss: { [weak self] in self?.setReportBackdrop(forLargeDetent: false, animated: false) }
+                onDidDismiss: { [weak self] in self?.stopReportBackdropTracking() }
             )
             sheet.delegate = delegate
             reportSheetDelegate = delegate
@@ -210,11 +237,15 @@ final class FlashbackPresenter {
         reportDetent = detent
         reportHost = host
         // Initial detent is half (undimmed): leave the window clear so the host shows
-        // through as intended. The backdrop only turns black once expanded to `.large`.
+        // through as intended. The backdrop darkens continuously as the sheet recedes toward
+        // `.large`, driven by the display link started below.
         root.present(host, animated: true)
+        startReportBackdropTracking()
     }
 
-    /// Synchronizes the overlay window's backdrop color with the report sheet's detent.
+    // MARK: - Report backdrop tracking (progress-driven)
+
+    /// Synchronizes the overlay window's backdrop opacity with the report sheet's *live* height.
     ///
     /// Why this is needed: the SDK presents from a transparent overlay `UIWindow`
     /// (`PassthroughWindow`, `backgroundColor == .clear`) so the host shows through where no
@@ -225,59 +256,81 @@ final class FlashbackPresenter {
     /// at `.large` the receded card and the host window behind it both show through, which is the
     /// "card shrinks, host bleeds through" bug (issue #20).
     ///
-    /// The fix paints the overlay window black *only while the report sheet is at `.large`*, and
-    /// restores `.clear` for half / dismissed. This supplies the missing black foundation that a
-    /// normal presenting window would have, without dimming the host at half (which stays
-    /// intentionally undimmed) and without affecting `PassthroughWindow.hitTest` (color only).
-    private func setReportBackdrop(forLargeDetent isLarge: Bool, animated: Bool) {
-        guard let window else { return }
-        let target: UIColor = isLarge ? .black : .clear
-        guard window.backgroundColor != target else { return }
-        let apply = { window.backgroundColor = target }
-        if animated {
-            UIView.animate(withDuration: 0.25, animations: apply)
-        } else {
-            apply()
-        }
+    /// Why this is *progress-driven*, not event-driven: the first fix dimmed the window black only
+    /// while the detent-change delegate reported `.large`. That delegate fires once, at settle, but
+    /// the presenting card recedes continuously in step with the drag — so the black backdrop
+    /// snapped in only after the drag finished, while the card-shrink artifact was already on screen
+    /// mid-drag (a mismatch verified in a real screen recording). Instead, a display link samples the
+    /// sheet's presentation-layer frame every frame and sets the backdrop alpha from how far the
+    /// sheet has receded between the half height and `.large`. This makes drag-follow, cancelled
+    /// swipes (progress runs back down), programmatic expand (smooth via the presentation layer),
+    /// swipe-dismiss (fades out as it drops), and slide-in (clear below the half height) all correct
+    /// for free.
+    private func startReportBackdropTracking() {
+        guard backdropDisplayLink == nil else { return }
+        let proxy = DisplayLinkProxy { [weak self] in self?.updateReportBackdrop() }
+        let link = CADisplayLink(target: proxy, selector: #selector(DisplayLinkProxy.tick))
+        link.add(to: .main, forMode: .common)             // .common so it keeps firing during tracking/scroll run loops
+        backdropLinkProxy = proxy
+        backdropDisplayLink = link
+        updateReportBackdrop()                            // seed the initial color without waiting a frame
     }
 
-    /// Handles an interactive (swipe) dismissal of the report sheet.
+    /// Stops the display link and resets the backdrop to clear. Called on every dismiss path
+    /// (programmatic, swipe-complete via `presentationControllerDidDismiss`, and teardown), so the
+    /// window is never left blacked out and the link never outlives the presentation.
+    private func stopReportBackdropTracking() {
+        backdropDisplayLink?.invalidate()
+        backdropDisplayLink = nil
+        backdropLinkProxy = nil
+        reportHalfDetentHeight = nil
+        reportMaxDetentValue = nil
+        window?.backgroundColor = .clear
+    }
+
+    /// One display-link tick: reads the sheet's live presented-view frame and paints the overlay
+    /// window black in proportion to how far the sheet has receded toward `.large`.
     ///
-    /// Fades the black backdrop out alongside the swipe so it doesn't pop, but if the swipe is
-    /// cancelled (the user drags down then releases, snapping back to `.large`) the completion's
-    /// `isCancelled` restores black. This is the lifecycle-safe counterpart to the old self-dim
-    /// attempt that got stranded on a cancelled down-swipe (issue #20): the OS owns the dismissal,
-    /// so we only ride its coordinator and reconcile on cancel.
-    private func handleReportWillDismiss(with coordinator: UIViewControllerTransitionCoordinator?) {
-        guard let coordinator else {
-            // No coordinator (non-animated dismiss): rely on didDismiss to clear.
-            return
-        }
-        coordinator.animate(alongsideTransition: { [weak self] _ in
-            self?.window?.backgroundColor = .clear
-        }, completion: { [weak self] context in
-            // Swipe cancelled and still expanded → restore black; otherwise didDismiss clears it.
-            guard let self, context.isCancelled else { return }
-            let isLarge = self.reportHost?.sheetPresentationController?.selectedDetentIdentifier == .large
-            self.setReportBackdrop(forLargeDetent: isLarge, animated: true)
-        })
+    /// `progress = (h_now - h_half) / (h_max - h_half)`, clamped to 0...1, where `h_now` is the live
+    /// sheet height from the presentation-layer frame (so it tracks the in-flight animation, not the
+    /// settled model value), and `h_half` / `h_max` come from the custom detent resolver.
+    private func updateReportBackdrop() {
+        guard let window,
+              let presentationController = reportHost?.presentationController,
+              let containerView = presentationController.containerView,
+              let presentedView = presentationController.presentedView,
+              let half = reportHalfDetentHeight,
+              let max = reportMaxDetentValue,
+              max > half else { return }
+
+        // Use the presentation layer so the height reflects the in-flight animation position
+        // (drag / spring), not the settled geometry; fall back to the model layer. Convert the
+        // layer's top-left into the container layer's coordinate space (robust across any wrapper
+        // layers between the presented view and the container), then derive the visible sheet
+        // height as the distance from that top edge to the container's bottom.
+        let layer = presentedView.layer.presentation() ?? presentedView.layer
+        let topInContainer = containerView.layer.convert(CGPoint(x: 0, y: 0), from: layer)
+        let heightNow = containerView.bounds.height - topInContainer.y
+
+        let progress = ((heightNow - half) / (max - half)).clampedToUnitInterval()
+        window.backgroundColor = UIColor.black.withAlphaComponent(progress)
     }
 
     /// Expands the report sheet to `.large`. Used before transitions that feel cramped at
-    /// half (e.g. pushing settings).
+    /// half (e.g. pushing settings). The backdrop follows the expansion automatically via the
+    /// display link tracking the presentation-layer frame — no manual dimming needed here.
     private func expandReportSheet() {
         guard let sheet = reportHost?.sheetPresentationController else { return }
         sheet.animateChanges { sheet.selectedDetentIdentifier = .large }
         reportDetent?.isExpanded = true                   // reflect immediately without waiting for the delegate (enlarges the preview)
-        setReportBackdrop(forLargeDetent: true, animated: true)   // black the window in step with the programmatic expand (the delegate also fires, but this avoids a beat of host bleed-through)
     }
 
     /// Dismisses the report input UI.
     func dismissReport() {
-        // Programmatic dismiss (✕ / completion). Fade the backdrop back to clear alongside the
-        // dismissal so the window doesn't flash black behind a sheet that's animating away. The
-        // `presentationControllerDidDismiss` fail-safe also clears it if this path is bypassed.
-        setReportBackdrop(forLargeDetent: false, animated: true)
+        // Stop the tracker and clear the window first so it doesn't flash black behind a sheet
+        // animating away. Swipe-dismiss (which bypasses this path) is covered by
+        // `presentationControllerDidDismiss` → `stopReportBackdropTracking`.
+        stopReportBackdropTracking()
         reportHost?.dismiss(animated: true)
         reportHost = nil
         reportSheetDelegate = nil
@@ -487,48 +540,52 @@ final class SheetDetentModel: ObservableObject {
 }
 
 /// Delegate observing the sheet's selected-detent changes and reflecting them into
-/// `SheetDetentModel`, and relaying detent / dismissal events to the presenter so it can keep the
-/// overlay window's backdrop in sync (black at `.large`, clear otherwise — see
-/// `FlashbackPresenter.setReportBackdrop`). `@MainActor` since UIKit calls it on main.
+/// `SheetDetentModel` (its sole job — e.g. enlarging the video preview at `.large`). The overlay
+/// window's backdrop is **no longer** driven from here: it follows the sheet's live height via a
+/// display link (see `FlashbackPresenter.updateReportBackdrop`), because the detent-change callback
+/// only fires at settle and so couldn't track the continuous card recede. `@MainActor` since UIKit
+/// calls it on main.
 ///
 /// `UISheetPresentationControllerDelegate` refines `UIAdaptivePresentationControllerDelegate`, so
-/// the swipe-dismiss callbacks (`presentationControllerWillDismiss` / `…DidDismiss`) land here too.
+/// the swipe-dismiss callback (`…DidDismiss`) lands here too — used to stop the backdrop tracker on
+/// an interactive dismiss, which never goes through `dismissReport()`.
 @MainActor
 private final class ReportSheetDelegate: NSObject, UISheetPresentationControllerDelegate {
     private let model: SheetDetentModel
-    /// Called whenever the selected detent changes; `true` while expanded to `.large`.
-    private let onDetentChange: (Bool) -> Void
-    /// Called when an interactive (swipe) dismissal begins, with the transition coordinator so the
-    /// backdrop can fade alongside it and reconcile on cancel.
-    private let onWillDismiss: (UIViewControllerTransitionCoordinator?) -> Void
-    /// Called once the sheet has actually been dismissed (swipe completed) — the clear fail-safe.
+    /// Called once the sheet has actually been dismissed (incl. swipe-completed) so the presenter
+    /// can stop the display link and clear the window — that path bypasses `dismissReport()`.
     private let onDidDismiss: () -> Void
 
     init(
         model: SheetDetentModel,
-        onDetentChange: @escaping (Bool) -> Void,
-        onWillDismiss: @escaping (UIViewControllerTransitionCoordinator?) -> Void,
         onDidDismiss: @escaping () -> Void
     ) {
         self.model = model
-        self.onDetentChange = onDetentChange
-        self.onWillDismiss = onWillDismiss
         self.onDidDismiss = onDidDismiss
     }
 
     func sheetPresentationControllerDidChangeSelectedDetentIdentifier(_ sheet: UISheetPresentationController) {
-        let isLarge = sheet.selectedDetentIdentifier == .large
-        model.isExpanded = isLarge
-        onDetentChange(isLarge)
-    }
-
-    func presentationControllerWillDismiss(_ presentationController: UIPresentationController) {
-        onWillDismiss(presentationController.presentedViewController.transitionCoordinator)
+        model.isExpanded = sheet.selectedDetentIdentifier == .large
     }
 
     func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
         onDidDismiss()
     }
+}
+
+/// Weak relay between `CADisplayLink` (which retains its target) and the presenter, so the link
+/// never forms a retain cycle with the presenter. If a stop is ever missed the proxy simply calls
+/// into a deallocated weak reference (a no-op) rather than keeping the presenter alive.
+@MainActor
+private final class DisplayLinkProxy {
+    private let onTick: () -> Void
+    init(onTick: @escaping () -> Void) { self.onTick = onTick }
+    @objc func tick() { onTick() }
+}
+
+private extension CGFloat {
+    /// Clamps the value into `0...1`. Used for the backdrop recede progress.
+    func clampedToUnitInterval() -> CGFloat { Swift.min(1, Swift.max(0, self)) }
 }
 
 /// A `UIWindow` that passes touches outside concrete subviews (e.g. buttons) through to the host app.
