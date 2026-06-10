@@ -479,6 +479,12 @@ private struct FilmstripTrimmer: View {
     }
 
     /// Pin the height to prevent overflow (without it, .fill spills vertically and covers the UI below).
+    ///
+    /// `.clipped()` only clips the *drawing*: `scaledToFill` still lays each thumbnail's backing view out at
+    /// its un-clipped size, so on wide cells (iPad) the image view overflows the strip height upward and ends up
+    /// hit-testing on top of the play button just above it (it has no gesture, so the tap is silently swallowed —
+    /// the button looks dead). The strip is display-only (scrub / handles live in their own overlay layers), so
+    /// drop its hit testing entirely to keep those overflowing image views from stealing neighboring taps.
     private func filmstrip(width: CGFloat, height: CGFloat) -> some View {
         let count = max(thumbnails.count, 1)
         let cellWidth = width / CGFloat(count)
@@ -496,6 +502,7 @@ private struct FilmstripTrimmer: View {
             }
         }
         .frame(width: width, height: height)
+        .allowsHitTesting(false)
     }
 
     private func dim(width: CGFloat, height: CGFloat) -> some View {
