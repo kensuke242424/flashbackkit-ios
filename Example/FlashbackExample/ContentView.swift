@@ -63,6 +63,9 @@ struct ContentView: View {
         if let toastKind = env["FLASHBACK_TOAST_DEMO"] { after(0.6) { Flashback.debugShowToast(toastKind) } }
         if env["FLASHBACK_SETTINGS_DEMO"] != nil { after(0.5) { Flashback.debugPresentSettings() } }
         if env["FLASHBACK_SHAKE_HINT_DEMO"] != nil { after(0.5) { Flashback.debugPresentShakeHint() } }
+        // Auto-expands the report sheet to .large ~1.5s after it presents, to verify the .large
+        // window backdrop (issue #20) without a manual swipe. Combine with a report demo (EMPTY/TRIM).
+        if env["FLASHBACK_EXPAND_DEMO"] != nil { after(1.5) { Flashback.debugExpandReport() } }
         // Rotates the device to landscape (~2s) then back to portrait (~8s) to verify the FAB
         // re-clamps into the new bounds on rotation. Uses the iOS16+ public geometry-update API.
         if env["FLASHBACK_ROTATE_DEMO"] != nil {

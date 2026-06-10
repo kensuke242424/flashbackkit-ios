@@ -103,5 +103,12 @@ public extension Flashback {
     static func debugPresentSettings() {
         FlashbackController.shared.debugPresentSettings()
     }
+
+    /// DEBUG-only: expand the currently-presented report sheet to `.large` (visual check of the
+    /// `.large` window backdrop). Present a report first (e.g. `debugPresentEmptyReport()`).
+    @MainActor
+    static func debugExpandReport() {
+        FlashbackController.shared.debugExpandReport()
+    }
 }
 #endif

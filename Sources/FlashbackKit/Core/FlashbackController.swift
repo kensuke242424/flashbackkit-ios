@@ -366,6 +366,12 @@ final class FlashbackController {
         guard let settingsStore else { return }
         presenter.debugPresentSettings(store: settingsStore)
     }
+
+    /// DEBUG only: expands the currently-presented report sheet to `.large` (to verify the
+    /// `.large` window backdrop). Combine with a report demo (e.g. EMPTY/TRIM).
+    func debugExpandReport() {
+        presenter.debugExpandReport()
+    }
     #endif
 
     /// Trigger (shake / floating button) → show the in-progress toast, export the most recent

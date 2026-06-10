@@ -148,6 +148,7 @@ final class FlashbackPresenter {
         reportHost = nil
         reportSheetDelegate = nil
         reportDetent = nil
+        window?.backgroundColor = .clear                           // fail-safe: never leave the window blacked out on teardown
         window?.isHidden = true
         window = nil
     }
@@ -197,13 +198,69 @@ final class FlashbackPresenter {
             sheet.detents = [halfDetent, .large()]
             sheet.selectedDetentIdentifier = Self.halfDetentID   // start at half (height that peeks the title)
             sheet.prefersGrabberVisible = true            // grabber hinting that it opens on swipe up
-            let delegate = ReportSheetDelegate(model: detent)
+            let delegate = ReportSheetDelegate(
+                model: detent,
+                onDetentChange: { [weak self] isLarge in self?.setReportBackdrop(forLargeDetent: isLarge, animated: true) },
+                onWillDismiss: { [weak self] coordinator in self?.handleReportWillDismiss(with: coordinator) },
+                onDidDismiss: { [weak self] in self?.setReportBackdrop(forLargeDetent: false, animated: false) }
+            )
             sheet.delegate = delegate
             reportSheetDelegate = delegate
         }
         reportDetent = detent
         reportHost = host
+        // Initial detent is half (undimmed): leave the window clear so the host shows
+        // through as intended. The backdrop only turns black once expanded to `.large`.
         root.present(host, animated: true)
+    }
+
+    /// Synchronizes the overlay window's backdrop color with the report sheet's detent.
+    ///
+    /// Why this is needed: the SDK presents from a transparent overlay `UIWindow`
+    /// (`PassthroughWindow`, `backgroundColor == .clear`) so the host shows through where no
+    /// overlay content sits. A `.pageSheet` at `.large` shrinks the *presenting* view into a
+    /// receded card and attaches its dim to that card — it never paints the whole window. In a
+    /// normal app the area around the card reads as black because the presenting window itself
+    /// has an opaque (black) backdrop. Our window is transparent, so there is no such backdrop:
+    /// at `.large` the receded card and the host window behind it both show through, which is the
+    /// "card shrinks, host bleeds through" bug (issue #20).
+    ///
+    /// The fix paints the overlay window black *only while the report sheet is at `.large`*, and
+    /// restores `.clear` for half / dismissed. This supplies the missing black foundation that a
+    /// normal presenting window would have, without dimming the host at half (which stays
+    /// intentionally undimmed) and without affecting `PassthroughWindow.hitTest` (color only).
+    private func setReportBackdrop(forLargeDetent isLarge: Bool, animated: Bool) {
+        guard let window else { return }
+        let target: UIColor = isLarge ? .black : .clear
+        guard window.backgroundColor != target else { return }
+        let apply = { window.backgroundColor = target }
+        if animated {
+            UIView.animate(withDuration: 0.25, animations: apply)
+        } else {
+            apply()
+        }
+    }
+
+    /// Handles an interactive (swipe) dismissal of the report sheet.
+    ///
+    /// Fades the black backdrop out alongside the swipe so it doesn't pop, but if the swipe is
+    /// cancelled (the user drags down then releases, snapping back to `.large`) the completion's
+    /// `isCancelled` restores black. This is the lifecycle-safe counterpart to the old self-dim
+    /// attempt that got stranded on a cancelled down-swipe (issue #20): the OS owns the dismissal,
+    /// so we only ride its coordinator and reconcile on cancel.
+    private func handleReportWillDismiss(with coordinator: UIViewControllerTransitionCoordinator?) {
+        guard let coordinator else {
+            // No coordinator (non-animated dismiss): rely on didDismiss to clear.
+            return
+        }
+        coordinator.animate(alongsideTransition: { [weak self] _ in
+            self?.window?.backgroundColor = .clear
+        }, completion: { [weak self] context in
+            // Swipe cancelled and still expanded → restore black; otherwise didDismiss clears it.
+            guard let self, context.isCancelled else { return }
+            let isLarge = self.reportHost?.sheetPresentationController?.selectedDetentIdentifier == .large
+            self.setReportBackdrop(forLargeDetent: isLarge, animated: true)
+        })
     }
 
     /// Expands the report sheet to `.large`. Used before transitions that feel cramped at
@@ -212,10 +269,15 @@ final class FlashbackPresenter {
         guard let sheet = reportHost?.sheetPresentationController else { return }
         sheet.animateChanges { sheet.selectedDetentIdentifier = .large }
         reportDetent?.isExpanded = true                   // reflect immediately without waiting for the delegate (enlarges the preview)
+        setReportBackdrop(forLargeDetent: true, animated: true)   // black the window in step with the programmatic expand (the delegate also fires, but this avoids a beat of host bleed-through)
     }
 
     /// Dismisses the report input UI.
     func dismissReport() {
+        // Programmatic dismiss (✕ / completion). Fade the backdrop back to clear alongside the
+        // dismissal so the window doesn't flash black behind a sheet that's animating away. The
+        // `presentationControllerDidDismiss` fail-safe also clears it if this path is bypassed.
+        setReportBackdrop(forLargeDetent: false, animated: true)
         reportHost?.dismiss(animated: true)
         reportHost = nil
         reportSheetDelegate = nil
@@ -319,6 +381,14 @@ final class FlashbackPresenter {
         root.present(host, animated: true)
     }
 
+    /// DEBUG only: expands the currently-presented report sheet to `.large` (animated). Used by
+    /// the `FLASHBACK_EXPAND_DEMO` env hook to verify the `.large` backdrop without a manual swipe.
+    /// No-op if no report sheet is up.
+    func debugExpandReport() {
+        guard reportHost?.sheetPresentationController != nil else { return }
+        expandReportSheet()
+    }
+
     #endif
 
     // MARK: - Install
@@ -417,14 +487,47 @@ final class SheetDetentModel: ObservableObject {
 }
 
 /// Delegate observing the sheet's selected-detent changes and reflecting them into
-/// `SheetDetentModel`. `@MainActor` since UIKit calls it on main.
+/// `SheetDetentModel`, and relaying detent / dismissal events to the presenter so it can keep the
+/// overlay window's backdrop in sync (black at `.large`, clear otherwise — see
+/// `FlashbackPresenter.setReportBackdrop`). `@MainActor` since UIKit calls it on main.
+///
+/// `UISheetPresentationControllerDelegate` refines `UIAdaptivePresentationControllerDelegate`, so
+/// the swipe-dismiss callbacks (`presentationControllerWillDismiss` / `…DidDismiss`) land here too.
 @MainActor
 private final class ReportSheetDelegate: NSObject, UISheetPresentationControllerDelegate {
     private let model: SheetDetentModel
-    init(model: SheetDetentModel) { self.model = model }
+    /// Called whenever the selected detent changes; `true` while expanded to `.large`.
+    private let onDetentChange: (Bool) -> Void
+    /// Called when an interactive (swipe) dismissal begins, with the transition coordinator so the
+    /// backdrop can fade alongside it and reconcile on cancel.
+    private let onWillDismiss: (UIViewControllerTransitionCoordinator?) -> Void
+    /// Called once the sheet has actually been dismissed (swipe completed) — the clear fail-safe.
+    private let onDidDismiss: () -> Void
+
+    init(
+        model: SheetDetentModel,
+        onDetentChange: @escaping (Bool) -> Void,
+        onWillDismiss: @escaping (UIViewControllerTransitionCoordinator?) -> Void,
+        onDidDismiss: @escaping () -> Void
+    ) {
+        self.model = model
+        self.onDetentChange = onDetentChange
+        self.onWillDismiss = onWillDismiss
+        self.onDidDismiss = onDidDismiss
+    }
 
     func sheetPresentationControllerDidChangeSelectedDetentIdentifier(_ sheet: UISheetPresentationController) {
-        model.isExpanded = sheet.selectedDetentIdentifier == .large
+        let isLarge = sheet.selectedDetentIdentifier == .large
+        model.isExpanded = isLarge
+        onDetentChange(isLarge)
+    }
+
+    func presentationControllerWillDismiss(_ presentationController: UIPresentationController) {
+        onWillDismiss(presentationController.presentedViewController.transitionCoordinator)
+    }
+
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        onDidDismiss()
     }
 }
 
