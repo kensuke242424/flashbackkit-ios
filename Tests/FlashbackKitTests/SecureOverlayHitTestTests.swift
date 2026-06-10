@@ -156,5 +156,69 @@ final class SecureOverlayHitTestTests: XCTestCase {
         XCTAssertTrue(hit === sheet || hit?.isDescendant(of: sheet) == true,
                       "シート上の hit が sheet（の子孫）でない: \(String(describing: hit.map { type(of: $0) }))")
     }
+
+    // MARK: - scrim（自前 backdrop）表示中は空き領域タップを飲む
+
+    /// report の `.large` scrim は UIKit の `UIDimmingView` を切って window の `backgroundColor` に
+    /// 自前で描く（`updateReportBackdrop`）。dim を切るとシート上端の隙間タップが透明 window を
+    /// 素通りしてホストへ届く事故が起きるため、`PassthroughWindow.hitTest` は backgroundColor の
+    /// alpha が立っている間は素通し（nil）せず window 自身を返してタップを飲む。alpha==0（half /
+    /// 未提示）では従来どおり素通しに戻ること（既存挙動不変）も併せて確認する。
+    func testScrimSwallowsEmptyAreaTapWhilePainted() {
+        let size = CGSize(width: 393, height: 852)     // iPhone 16 portrait
+        let (window, root) = makeOverlay(size: size)
+        defer { window.isHidden = true }
+        _ = root                                       // コンテンツ未配置（空き領域）
+
+        let p = CGPoint(x: size.width / 2, y: 80)      // シート上端の隙間相当（上部の空き領域）
+
+        // 1) clear（half / 未提示相当）: 従来どおり素通し（nil）。
+        window.backgroundColor = .clear
+        XCTAssertNil(window.hitTest(p, with: nil),
+                     "scrim 無し（clear）で空き領域タップが素通しされていない（既存挙動が変わっている）")
+
+        // 2) scrim 描画中（.large 相当の自前 backdrop）: 素通しせず window 自身を飲む。
+        window.backgroundColor = UIColor.black.withAlphaComponent(0.12)
+        let scrimHit = window.hitTest(p, with: nil)
+        XCTAssertTrue(scrimHit === window,
+                      "scrim 描画中に空き領域タップが飲まれず素通りしている（ホストへ届く事故）: \(String(describing: scrimHit.map { type(of: $0) }))")
+
+        // 3) 閾値: ごく薄い（alpha <= 0.01）は素通しのまま（しきい値の境界確認）。
+        window.backgroundColor = UIColor.black.withAlphaComponent(0.005)
+        XCTAssertNil(window.hitTest(p, with: nil),
+                     "ごく薄い backdrop（alpha<=0.01）で素通しに戻っていない")
+
+        // 4) clear に戻せば素通しに復帰（dismiss 後の残留無しの担保）。
+        window.backgroundColor = .clear
+        XCTAssertNil(window.hitTest(p, with: nil), "scrim を消した後に素通しへ戻っていない")
+    }
+
+    /// scrim 描画中でも実コンテンツ（FAB/toast 相当）の hit は従来どおり優先されること
+    /// （ゲートは空き領域=nil 分岐の後段にだけ足したので、コンテンツの上は奪われない）。
+    func testScrimDoesNotStealContentTaps() {
+        let size = CGSize(width: 393, height: 852)
+        let (window, root) = makeOverlay(size: size)
+        defer { window.isHidden = true }
+
+        let button = UIButton(type: .system)
+        button.frame = CGRect(x: 100, y: 300, width: 120, height: 44)
+        root.addSubview(button)                        // override で contentHost 配下へ
+        root.layoutIfNeeded()
+
+        window.backgroundColor = UIColor.black.withAlphaComponent(0.12)   // scrim 描画中
+        let onButton = CGPoint(x: 160, y: 322)
+        let hit = window.hitTest(onButton, with: nil)
+        XCTAssertNotNil(hit, "scrim 中にコンテンツボタン上で hitTest が nil（コンテンツが取れていない）")
+        XCTAssertFalse(hit === window, "scrim 中にコンテンツ上のタップが window に飲まれている（コンテンツが優先されていない）")
+
+        var node = hit
+        var isButtonOrDescendant = false
+        while let n = node {
+            if n === button { isButtonOrDescendant = true; break }
+            node = n.superview
+        }
+        XCTAssertTrue(isButtonOrDescendant,
+                      "scrim 中の button 上 hit が button（の子孫）でない: \(String(describing: hit.map { type(of: $0) }))")
+    }
 }
 #endif

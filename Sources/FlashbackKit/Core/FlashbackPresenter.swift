@@ -35,6 +35,17 @@ final class FlashbackPresenter {
     /// 0.58 height so that anything at or below it leaves iPhone 16 (and taller) untouched.
     static let halfDetentFloor: CGFloat = 483
 
+    /// Peak opacity of the self-drawn report backdrop at full `.large` expansion.
+    ///
+    /// Since the report sheet disables UIKit's own `UIDimmingView` (see
+    /// `largestUndimmedDetentIdentifier` in `presentReport`), the window backdrop is the *only*
+    /// scrim, so it must match the brightness UIKit's dim would have produced rather than going to
+    /// fully black. This value is the measured alpha of a standard `UIDimmingView`: lldb-read on a
+    /// plain dimmed sheet (system dim left on) reported `backgroundColor` alpha ≈ 0.12 on
+    /// iPhone 16 / iOS 18.4. Using it makes the host show faintly through at `.large`, matching a
+    /// stock dimmed sheet instead of a black-out.
+    static let backdropMaxAlpha: CGFloat = 0.12
+
     private let model = OverlayModel()
     private var window: UIWindow?
     private weak var reportHost: UIViewController?
@@ -225,6 +236,18 @@ final class FlashbackPresenter {
             sheet.detents = [halfDetent, .large()]
             sheet.selectedDetentIdentifier = Self.halfDetentID   // start at half (height that peeks the title)
             sheet.prefersGrabberVisible = true            // grabber hinting that it opens on swipe up
+            // Disable the system dim for *every* detent of the report sheet (report-only; other
+            // sheets — priming / settings — keep their default dim). The system dim is the
+            // `UIDimmingView` UIKit attaches to the presenting card; on `.pageSheet` `.large` that
+            // card recedes/scales and the dim recedes/scales with it. On our transparent overlay
+            // window that produced the "grey shrinking card" artifact (the dim painting a faint
+            // grey over the transparent receded card, lldb-confirmed). With the dim disabled there
+            // is no UIKit scrim to recede, so the artifact's source is gone; the scrim is now fully
+            // self-drawn by the window backdrop (`updateReportBackdrop`), which paints the *whole*
+            // window — not a shrinking card — at an OS-matched alpha. Setting it to `.large` (the
+            // largest detent) means no detent is dimmed, so half stays clear (host shows through,
+            // unchanged) and `.large` is scrimmed by our backdrop instead of UIKit's.
+            sheet.largestUndimmedDetentIdentifier = .large
             // The delegate now only mirrors the detent into SheetDetentModel (its original role).
             // The window backdrop is driven separately, every frame, by the display link.
             let delegate = ReportSheetDelegate(
@@ -312,8 +335,10 @@ final class FlashbackPresenter {
         let topInContainer = containerView.layer.convert(CGPoint(x: 0, y: 0), from: layer)
         let heightNow = containerView.bounds.height - topInContainer.y
 
+        // Scale the recede progress (0...1) by the OS-matched peak alpha so the backdrop tops out at
+        // a standard dim level (host faintly visible at `.large`) instead of fully black.
         let progress = ((heightNow - half) / (max - half)).clampedToUnitInterval()
-        window.backgroundColor = UIColor.black.withAlphaComponent(progress)
+        window.backgroundColor = UIColor.black.withAlphaComponent(progress * Self.backdropMaxAlpha)
     }
 
     /// Expands the report sheet to `.large`. Used before transitions that feel cramped at
@@ -596,8 +621,9 @@ private extension CGFloat {
 final class PassthroughWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        // Hit the window itself = empty area → pass through to the host.
-        guard let hit, hit !== self else { return nil }
+        // Hit the window itself = empty area → pass through to the host (unless a scrim is up; see
+        // `passthroughOrScrim`).
+        guard let hit, hit !== self else { return passthroughOrScrim() }
 
         // If the resolved view is inside our overlay root's subtree, trust the root's own decision:
         // `SecureOverlayRootView.hitTest` only catches `contentHost`'s real descendants (the mounted
@@ -608,19 +634,37 @@ final class PassthroughWindow: UIWindow {
         // returning `contentHost` (or the field's internal views) even where nothing is mounted. The
         // old denylist here ("window / root view" → nil) didn't recognize those, so every empty-area
         // tap (host tabs / buttons) got swallowed. Re-asking the root view collapses the answer to
-        // "real content or pass-through" on every idiom / iOS version.
+        // "real content or pass-through" on every idiom / iOS version. Real content (FAB / toast)
+        // still wins here — only a *nil* (empty) result falls through to the scrim gate.
         if let root = rootViewController?.view {
             if hit.isDescendant(of: root) {
-                return root.hitTest(convert(point, to: root), with: event)
+                if let inner = root.hitTest(convert(point, to: root), with: event) { return inner }
+                return passthroughOrScrim()
             }
             // `UIWindow` may resolve an empty point to the root view's *container* chain (the VC
             // wrapper / `UIDropShadowView`) rather than into the root itself. That's still empty
-            // overlay → pass through to the host.
-            if root.isDescendant(of: hit) { return nil }
+            // overlay → pass through to the host (or hold for the scrim).
+            if root.isDescendant(of: hit) { return passthroughOrScrim() }
         }
         // A presented report / settings / priming sheet lives in its own transition container — a
         // separate subtree from the overlay root. Keep the default result so it stays interactive.
         return hit
+    }
+
+    /// Decides what an otherwise-empty (pass-through) point should return.
+    ///
+    /// Normally the overlay window is transparent and empty taps fall through to the host (returns
+    /// `nil`). But the report's `.large` scrim is self-drawn onto this window's `backgroundColor`
+    /// (see `FlashbackPresenter.updateReportBackdrop`) because the sheet disables UIKit's own
+    /// `UIDimmingView`. UIKit's dim used to intercept taps in the top gap above the sheet; with it
+    /// gone, those taps would pass straight through the (now visibly scrimmed) window to the host
+    /// behind it — a tap landing on something the user can't even see. So while the backdrop is
+    /// painted (alpha > a hair above 0), swallow the tap by returning the window itself instead of
+    /// `nil`. At alpha ~0 (half detent / no sheet) it returns `nil` exactly as before, leaving the
+    /// established pass-through behavior unchanged.
+    private func passthroughOrScrim() -> UIView? {
+        if let alpha = backgroundColor?.cgColor.alpha, alpha > 0.01 { return self }
+        return nil
     }
 }
 
