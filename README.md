@@ -345,6 +345,9 @@ These are platform realities the design works *around*, not bugs:
   or host the clip elsewhere and link to it.
 - **Claude / OpenAI can't analyze video directly** → extract keyframes, or use a
   video-native model.
+- **Rotation resets the pre-recording buffer** → segments of mixed dimensions can't be
+  merged losslessly, so a screen-size change (rotation / iPad multitasking) drops the ring
+  and restarts it. The captured clip then covers only the time since the new orientation.
 
 ## Example app
 

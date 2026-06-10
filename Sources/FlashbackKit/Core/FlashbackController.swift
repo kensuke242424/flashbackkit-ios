@@ -346,7 +346,7 @@ final class FlashbackController {
         let age = recorder.debugFrameAge.map { String(format: "%.1f", $0) } ?? "—"
         let marks = recorder.debugInAppMarksCaptured.map { $0 ? "YES" : "no" } ?? "?"
         let sysRec = recorder.debugSystemIsRecording ? "ON" : "off"
-        return "rec=\(recorder.isRecording ? "ON" : "off")  sysRec=\(sysRec)  age=\(age)s  isCaptured=\(recorder.debugScreenIsCaptured ? "YES" : "no")  marks=\(marks)  errs=\(recorder.debugCaptureErrorCount)\nwake=[\(recorder.debugWakeSnapshot)]"
+        return "rec=\(recorder.isRecording ? "ON" : "off")  sysRec=\(sysRec)  age=\(age)s  isCaptured=\(recorder.debugScreenIsCaptured ? "YES" : "no")  marks=\(marks)  dims=\(recorder.debugRingDimensions)  errs=\(recorder.debugCaptureErrorCount)\nwake=[\(recorder.debugWakeSnapshot)]"
     }
 
     /// DEBUG only: shows the in-progress toast (to check its appearance).

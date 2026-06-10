@@ -225,6 +225,9 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     var debugFrameAge: Double? { ringHolder.secondsSinceLastVideo() }
     /// DEBUG: whether the screen is under external capture (`UIScreen.isCaptured`).
     var debugScreenIsCaptured: Bool { Self.screenIsCaptured() }
+    /// DEBUG: dimensions of the segments currently in the ring ("WxH", or "-" when empty).
+    /// Reflects rotation resets — a change here means the size-change reset fired.
+    var debugRingDimensions: String { ring?.debugDimensionsText ?? "-" }
     /// DEBUG: whether in-app recording itself set isCaptured this session (probe result; nil = undetermined).
     var debugInAppMarksCaptured: Bool? { inAppMarksCaptured }
     /// DEBUG: system-side `RPScreenRecorder.isRecording` (distinct from in-app `captureConfirmed`).
@@ -448,8 +451,38 @@ final class SegmentRingWriter: @unchecked Sendable {
     private var videoInput: AVAssetWriterInput?
     private var currentSegmentStart: CMTime = .invalid
     private var segmentURLs: [URL] = []
+    /// Dimensions of the segments currently in the ring (set from the first sample of the
+    /// segment in `startNewSegment`, nil when the ring is empty). Used to detect a screen-size
+    /// change (rotation) so the ring can be reset before mixing incompatible segments. Touched
+    /// only on `queue`; a DEBUG-only mirror (`mirrorDimensionsForDebug`) exposes it to the HUD.
+    private var ringDimensions: CMVideoDimensions? {
+        didSet { mirrorDimensionsForDebug(ringDimensions) }   // expose to the MainActor HUD (DEBUG only)
+    }
     /// Torn-down flag. Guards against late samples arriving after finalization recreating a segment.
     private var tornDown = false
+
+    /// Mirror `ringDimensions` into an NSLock-guarded box (DEBUG only) so the MainActor
+    /// diagnostics line can read it without hopping onto `queue` (same pattern as RingHolder's
+    /// lastVideoNanos). A no-op in Release.
+    private func mirrorDimensionsForDebug(_ dims: CMVideoDimensions?) {
+        #if DEBUG
+        debugDimsLock.lock()
+        debugRingDimensions = dims.map { ($0.width, $0.height) }
+        debugDimsLock.unlock()
+        #endif
+    }
+
+    #if DEBUG
+    private let debugDimsLock = NSLock()
+    private var debugRingDimensions: (width: Int32, height: Int32)?
+
+    /// DEBUG: the ring's current segment dimensions ("WxH"), or "-" when the ring is empty.
+    var debugDimensionsText: String {
+        debugDimsLock.lock(); let d = debugRingDimensions; debugDimsLock.unlock()
+        guard let d else { return "-" }
+        return "\(d.width)x\(d.height)"
+    }
+    #endif
 
     init(bufferSeconds: TimeInterval) {
         self.bufferSeconds = bufferSeconds
@@ -470,6 +503,15 @@ final class SegmentRingWriter: @unchecked Sendable {
         guard !tornDown else { return }                    // drop late samples after finalization
         guard CMSampleBufferDataIsReady(sb) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sb)
+
+        // Screen size changed (rotation / iPad multitasking): mixed-dimension segments
+        // can't be passthrough-merged, so drop the buffered ring and restart at the new size.
+        if let fmt = CMSampleBufferGetFormatDescription(sb) {
+            let dim = CMVideoFormatDescriptionGetDimensions(fmt)
+            if let current = ringDimensions, current.width != dim.width || current.height != dim.height {
+                resetForSizeChange(from: current, to: dim)
+            }
+        }
 
         if writer == nil {
             startNewSegment(firstSample: sb, at: pts)
@@ -507,6 +549,7 @@ final class SegmentRingWriter: @unchecked Sendable {
         writer = w
         videoInput = input
         currentSegmentStart = pts
+        ringDimensions = dim                               // record the ring's dimensions (rotation detection)
     }
 
     /// Finalize the current segment; on completion, append its URL to the ring and drop old ones.
@@ -547,6 +590,35 @@ final class SegmentRingWriter: @unchecked Sendable {
         }
     }
 
+    /// Delete every finalized segment file, clear the list and forget the ring dimensions
+    /// (shared by reset and teardown). Must be called on `queue`.
+    private func deleteAllSegments() {
+        for url in segmentURLs {
+            try? FileManager.default.removeItem(at: url)
+        }
+        segmentURLs.removeAll()
+        ringDimensions = nil
+    }
+
+    /// Drop the entire ring after a screen-size change so the next export only merges
+    /// same-dimension segments. Runs synchronously on `queue` (no torn-down flag = recording
+    /// continues; the next sample opens a new segment at the new size).
+    private func resetForSizeChange(from: CMVideoDimensions, to: CMVideoDimensions) {
+        // The in-progress segment holds only old-dimension frames: cancel it and drop its
+        // partial file (don't finalize — it's incompatible with the new size).
+        if let writer, let input = videoInput {
+            input.markAsFinished()
+            let url = writer.outputURL
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: url)
+        }
+        deleteAllSegments()                                // also clears ringDimensions
+        writer = nil
+        videoInput = nil
+        currentSegmentStart = .invalid
+        FlashbackLog.lifecycle.info("画面サイズ変化を検知（\(from.width)x\(from.height)→\(to.width)x\(to.height)）。リングバッファをリセットし新サイズで録り直す。")
+    }
+
     // MARK: - Export / teardown
 
     func export() async throws -> URL {
@@ -573,10 +645,7 @@ final class SegmentRingWriter: @unchecked Sendable {
         queue.async { [self] in
             tornDown = true
             finalizeCurrent {
-                for url in self.segmentURLs {
-                    try? FileManager.default.removeItem(at: url)
-                }
-                self.segmentURLs.removeAll()
+                self.deleteAllSegments()
             }
         }
     }

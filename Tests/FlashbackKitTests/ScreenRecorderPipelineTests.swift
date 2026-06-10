@@ -51,6 +51,74 @@ final class ScreenRecorderPipelineTests: XCTestCase {
         try? FileManager.default.removeItem(at: url)
     }
 
+    /// 寸法変化（回転）がセグメント境界をまたいで起きるケース。
+    /// 64x64 を 2 秒（=セグメント境界）流した後に 120x64 へ切り替えると、
+    /// 旧寸法セグメントは破棄され、出力は新寸法ぶんのみになる。
+    func testSizeChangeAcrossSegmentBoundaryResetsRing() async throws {
+        let writer = SegmentRingWriter(bufferSeconds: 3)   // segmentDuration=2, maxSegments=3
+        let fps = 10
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+
+        // 前半: 64x64 を 20 フレーム（2 秒 = セグメント境界ちょうど）。
+        // 後半: 120x64 を 10 フレーム（1 秒）。PTS は通しで連続させる。
+        let firstCount = 20
+        let secondCount = 10
+        for i in 0..<(firstCount + secondCount) {
+            let pts = CMTimeMultiply(frameDuration, multiplier: Int32(i))
+            let isSecond = i >= firstCount
+            let width = isSecond ? 120 : 64
+            let pixelBuffer = try makePixelBuffer(width: width, height: 64, frameIndex: i)
+            let sampleBuffer = try makeSampleBuffer(pixelBuffer: pixelBuffer, pts: pts, duration: frameDuration)
+            writer.ingest(sampleBuffer, type: .video)
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let url = try await writer.export()
+        defer { writer.teardown(); try? FileManager.default.removeItem(at: url) }
+
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first, "video トラックが無い")
+        let size = try await track.load(.naturalSize)
+        XCTAssertEqual(size.width, 120, "naturalSize.width が新寸法でない: \(size.width)")
+        XCTAssertEqual(size.height, 64, "naturalSize.height が新寸法でない: \(size.height)")
+
+        // 旧 64x64 セグメントが捨てられている証拠として、尺は後半（≒1.0s）ぶんのみ。
+        let seconds = CMTimeGetSeconds(try await asset.load(.duration))
+        XCTAssertLessThan(seconds, 1.6, "旧寸法セグメントが残っている疑い（尺が長すぎ）: \(seconds)s")
+    }
+
+    /// 寸法変化が同一セグメント途中で起きるケース。
+    /// 64x64 を 1 秒（セグメント未完）流した直後に 120x64 へ切り替えると、
+    /// 書き込み中セグメントは cancel され、出力は新寸法のみになる。
+    func testSizeChangeWithinSegmentResetsRing() async throws {
+        let writer = SegmentRingWriter(bufferSeconds: 3)   // segmentDuration=2, maxSegments=3
+        let fps = 10
+        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+
+        let firstCount = 10                                // 1 秒（segmentDuration=2 未満 = セグメント途中）
+        let secondCount = 10
+        for i in 0..<(firstCount + secondCount) {
+            let pts = CMTimeMultiply(frameDuration, multiplier: Int32(i))
+            let isSecond = i >= firstCount
+            let width = isSecond ? 120 : 64
+            let pixelBuffer = try makePixelBuffer(width: width, height: 64, frameIndex: i)
+            let sampleBuffer = try makeSampleBuffer(pixelBuffer: pixelBuffer, pts: pts, duration: frameDuration)
+            writer.ingest(sampleBuffer, type: .video)
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let url = try await writer.export()
+        defer { writer.teardown(); try? FileManager.default.removeItem(at: url) }
+
+        let asset = AVURLAsset(url: url)
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first, "video トラックが無い")
+        let size = try await track.load(.naturalSize)
+        XCTAssertEqual(size.width, 120, "naturalSize.width が新寸法でない: \(size.width)")
+        XCTAssertEqual(size.height, 64, "naturalSize.height が新寸法でない: \(size.height)")
+    }
+
     // MARK: - 合成フレーム生成
 
     private func makePixelBuffer(width: Int, height: Int, frameIndex: Int) throws -> CVPixelBuffer {
