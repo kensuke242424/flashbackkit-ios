@@ -410,15 +410,37 @@ private final class ReportSheetDelegate: NSObject, UISheetPresentationController
 }
 
 /// A `UIWindow` that passes touches outside concrete subviews (e.g. buttons) through to the host app.
+///
+/// `internal` (not `private`) only so unit tests can drive `hitTest` end-to-end through the real
+/// window → secure-root structure (the iPad passthrough bug lives at this layer); not public API.
 @MainActor
-private final class PassthroughWindow: UIWindow {
+final class PassthroughWindow: UIWindow {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        // Hit the window itself / the root view (transparent background) = empty area with nothing
-        // mounted. Return nil to pass through to the host.
-        if hit == self || hit == rootViewController?.view {
-            return nil
+        // Hit the window itself = empty area → pass through to the host.
+        guard let hit, hit !== self else { return nil }
+
+        // If the resolved view is inside our overlay root's subtree, trust the root's own decision:
+        // `SecureOverlayRootView.hitTest` only catches `contentHost`'s real descendants (the mounted
+        // FAB / toast) and returns nil for everything else.
+        //
+        // Why this layer matters on iPad: the secure field's render canvas hosts a full-bounds,
+        // interactive `contentHost`, and `UIWindow`'s built-in hit-testing descends straight into it,
+        // returning `contentHost` (or the field's internal views) even where nothing is mounted. The
+        // old denylist here ("window / root view" → nil) didn't recognize those, so every empty-area
+        // tap (host tabs / buttons) got swallowed. Re-asking the root view collapses the answer to
+        // "real content or pass-through" on every idiom / iOS version.
+        if let root = rootViewController?.view {
+            if hit.isDescendant(of: root) {
+                return root.hitTest(convert(point, to: root), with: event)
+            }
+            // `UIWindow` may resolve an empty point to the root view's *container* chain (the VC
+            // wrapper / `UIDropShadowView`) rather than into the root itself. That's still empty
+            // overlay → pass through to the host.
+            if root.isDescendant(of: hit) { return nil }
         }
+        // A presented report / settings / priming sheet lives in its own transition container — a
+        // separate subtree from the overlay root. Keep the default result so it stays interactive.
         return hit
     }
 }
@@ -430,8 +452,12 @@ private final class PassthroughWindow: UIWindow {
 /// view (no-exclusion fallback). Since the canvas lives under `secureField`, `secureField` is also
 /// made interactive so its descendants are hit-testable, and empty areas return nil from `hitTest`
 /// to keep passing through to the host.
+///
+/// `internal` (not `private`) only so unit tests can exercise `hitTest` passthrough
+/// directly (iPad's secure-field internals add views that mustn't swallow host taps);
+/// not part of the public API.
 @MainActor
-private final class SecureOverlayRootView: UIView {
+final class SecureOverlayRootView: UIView {
     private let secureField = UITextField()
     /// Permanent container for the actual content (FAB / toast). Re-parenting this whole container
     /// between the excluded canvas and the normal view toggles capture exclusion at runtime while
@@ -521,17 +547,36 @@ private final class SecureOverlayRootView: UIView {
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        // Hit anything but actual content (self / secureField / canvas / contentHost) = empty area → nil to pass through.
-        if hit == self || hit == secureField || hit == canvas || hit == contentHost { return nil }
+        // Allowlist by ancestry: only catch the tap when it lands on a *true descendant* of
+        // `contentHost` (our mounted FAB / toast). Everything else passes through to the host.
+        //
+        // A denylist (self / secureField / canvas / contentHost → nil) is unsafe: the secure
+        // field's internal render views are undocumented and idiom/iOS-dependent. On iPad the
+        // field nests extra full-bounds internal `UIView`s under its canvas; once real content is
+        // mounted these can come out on top of empty areas, and a denylist returns them — swallowing
+        // every host tap (tabs, buttons) across the whole screen. Anchoring on contentHost's subtree
+        // is robust regardless of how many internal views the field adds.
+        guard let hit, hit !== contentHost, hit.isDescendant(of: contentHost) else { return nil }
         return hit
     }
 }
 
 /// Overlay root controller whose `view` is the secure root view.
+///
+/// `internal` (not `private`) only so unit tests can reproduce the real overlay structure
+/// (window → controller → secure root); not part of the public API.
 @MainActor
-private final class SecureOverlayRootController: UIViewController {
+final class SecureOverlayRootController: UIViewController {
     override func loadView() { view = SecureOverlayRootView() }
 }
+
+#if DEBUG
+extension SecureOverlayRootView {
+    /// Test-only: the secure `UITextField` whose excluded internal canvas hosts the content.
+    /// Exposed to let tests dump its internal view hierarchy (which differs by iOS/idiom).
+    var test_secureField: UITextField { secureField }
+}
+#endif
 
 /// Toast content.
 enum ToastContent {
