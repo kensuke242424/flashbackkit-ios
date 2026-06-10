@@ -15,6 +15,7 @@ struct SettingsView: View {
             displaySection
             retentionSection
             permissionSection
+            debugSection
         }
         .navigationTitle("設定")
         .navigationBarTitleDisplayMode(.inline)
@@ -30,21 +31,31 @@ struct SettingsView: View {
             // Pin the toggle to green (don't inherit the view's blue tint).
             Toggle("画面上に起動ボタンを表示", isOn: $store.floatingButtonVisible)
                 .tint(FlashbackColor.success)
-            // The label names the subject (launch button) and "OS" so it self-explains.
-            // Disabling the exclusion makes the button appear in OS screenshots/recordings,
-            // but it still never appears in Flashback's own clip (a separate overlay window
-            // that ReplayKit doesn't capture). "OS" is spelled out to avoid confusion.
+        } header: {
+            Text("表示")
+        } footer: {
+            Text("画面上に起動ボタンを表示し、そこからレポートを起動できます。（端末を2回振っても起動できます。）")
+        }
+    }
+
+    // MARK: - Debug
+
+    /// Rarely-used / diagnostic controls, kept at the bottom out of the way.
+    private var debugSection: some View {
+        Section {
             // The value is the inverse of the store's exclusion flag (on = shown = not
-            // excluded). Default off = hidden.
+            // excluded). Default off = hidden. Disabling the exclusion makes the button
+            // appear in OS screenshots/recordings, but it still never appears in Flashback's
+            // own clip (a separate overlay window that ReplayKit doesn't capture).
             Toggle("起動ボタンを OS のスクリーンショット・録画に写す", isOn: Binding(
                 get: { !store.excludesButtonFromCapture },
                 set: { store.excludesButtonFromCapture = !$0 }
             ))
             .tint(FlashbackColor.success)
         } header: {
-            Text("表示")
+            Text("デバッグ")
         } footer: {
-            Text("画面上に起動ボタンを表示し、そこからレポートを起動できます。（端末を2回振っても起動できます。）")
+            Text("通常は不要です。ドキュメント用に起動ボタンを OS のスクショ/録画へ写したいときだけオンにします。")
         }
     }
 
