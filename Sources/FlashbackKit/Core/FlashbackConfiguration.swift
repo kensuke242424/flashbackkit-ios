@@ -8,7 +8,8 @@ public struct FlashbackConfiguration: Sendable {
     /// screen's 10/20/30/60 options).
     public var bufferSeconds: TimeInterval
 
-    /// Enabled flag. Generally expected to be false in Release builds.
+    /// Master on/off switch. Default `true`; when `false`, `Flashback.start()` does nothing.
+    /// The SDK does not auto-disable in Release — hosts gate this themselves if they want that.
     public var isEnabled: Bool
 
     /// The set of triggers that launch the report UI (`OptionSet`, multiple at once).

@@ -129,11 +129,11 @@ final class FlashbackPresenter {
         window = nil
     }
 
-    /// Presents the report input UI as a half-modal (starts at `.medium`, swipe up for `.large`).
+    /// Presents the report input UI as a half-modal (a custom half detent, swipe up for `.large`).
     ///
-    /// At `.medium` it shows the video preview plus the clip bar (trimmer); share (↑) lives
-    /// in the nav bar so you can **share without leaving medium**. Swiping up (`.large`) reveals
-    /// the title and device info. The preview is small at `.medium` and large at `.large`, so the
+    /// At half height it shows the video preview plus the clip bar (trimmer); share (↑) lives
+    /// in the nav bar so you can **share without leaving half**. Swiping up (`.large`) reveals
+    /// the title and device info. The preview is small at half and large at `.large`, so the
     /// half height never collapses the clip bar.
     /// - Parameters:
     ///   - clipURL: the most recent clip (shows preview + trimming if present); otherwise an idle notice.
@@ -386,7 +386,7 @@ private final class SceneConnectionObserver: NSObject {
 /// e.g. to enlarge the video preview. `ReportSheetDelegate` updates it on detent changes.
 @MainActor
 final class SheetDetentModel: ObservableObject {
-    /// Whether it's expanded to `.large` (false = the `.medium` half).
+    /// Whether it's expanded to `.large` (false = the half detent).
     @Published var isExpanded: Bool = false
 }
 
@@ -591,7 +591,7 @@ private enum ToastPalette {
     }
 }
 
-/// Shared toast capsule (pill with ~20pt corner radius, 12pt, inverted background).
+/// Shared toast capsule (fully-rounded pill via `Capsule`, 12pt, inverted background).
 private struct ToastCapsule<Content: View>: View {
     @ViewBuilder var content: Content
 

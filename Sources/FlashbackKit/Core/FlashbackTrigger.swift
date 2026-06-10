@@ -4,7 +4,7 @@
 /// shake for handheld devices, the floating button for stationary / fixed-stand use.
 ///
 /// ```swift
-/// Flashback.start()                                   // default: all means on
+/// Flashback.start()                                   // default: shake + floating button
 /// Flashback.start(configuration: .init(triggers: [.shake]))          // handheld only
 /// Flashback.start(configuration: .init(triggers: [.floatingButton])) // stationary only (reliable)
 /// ```

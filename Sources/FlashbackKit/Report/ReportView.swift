@@ -58,7 +58,7 @@ struct ReportView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
                         if let clipURL {
-                            // At half (.medium) the video is the focus (capped ~220 so the clip bar stays visible).
+                            // At half the video is the focus (capped 200 so the clip bar stays visible).
                             // When expanded (.large) the sheet tends to have spare space at the bottom, so the video grows to fill it.
                             VideoTrimmerView(
                                 url: clipURL,

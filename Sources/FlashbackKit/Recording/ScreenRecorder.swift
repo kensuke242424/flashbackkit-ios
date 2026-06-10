@@ -370,7 +370,7 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     }
 }
 
-/// Holder for the "current ring" touched by the capture handler (background thread, `@Sendable`).
+/// Holder for the "current ring" touched by the capture handler (background thread).
 /// A lock makes the ring swap atomic, so retention changes (ring swap) without stopping
 /// recording and post-stop sample drops (ring=nil) are both safe.
 private final class RingHolder: @unchecked Sendable {

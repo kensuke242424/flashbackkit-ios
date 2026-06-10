@@ -6,8 +6,12 @@ import Foundation
 public enum Flashback {
 
     /// Start FlashbackKit.
-    /// Begins buffer recording and presents the report UI on any enabled trigger
-    /// (default: shake / floating button). Narrow the means via `configuration.triggers`.
+    /// Installs the triggers and overlay (default: shake / floating button) and arms the SDK
+    /// to present the report UI when a trigger fires. Narrow the means via `configuration.triggers`.
+    ///
+    /// Recording does not begin here: with the default `promptOnLaunch: false`, nothing is
+    /// recorded (and no iOS permission prompt appears) until the tester turns recording on —
+    /// or until launch, if you set `promptOnLaunch: true`.
     ///
     /// Call once at app launch (in any of SwiftUI `App.init`,
     /// `AppDelegate.didFinishLaunching`, `SceneDelegate.scene(_:willConnectTo:)`, or the

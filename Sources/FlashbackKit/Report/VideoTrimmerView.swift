@@ -305,7 +305,7 @@ struct VideoTrimmerView: View {
                 // While scrubbing, finger-follow wins (the observer doesn't overwrite the playhead).
                 guard !isScrubbing else { return }
                 playhead = seconds
-                // At the selection's end, loop to its start and pause (shows play, one tap replays).
+                // At the selection's end, rewind to its start and pause (shows play, one tap replays).
                 // When upperBound == duration, AVPlayer auto-pauses at the real end, so set pause()/isPlaying explicitly too.
                 if isPlaying, seconds >= selection.upperBound {
                     seek(to: selection.lowerBound)
