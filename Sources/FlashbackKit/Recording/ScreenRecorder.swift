@@ -54,11 +54,17 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     /// `isCaptured` to true definitively means external capture started, so we can interrupt immediately.
     private var inAppMarksCaptured: Bool?
 
-    /// Last interface orientation handed to the ring (`CGImagePropertyOrientation`). The watchdog
-    /// compares against this each tick and forwards only changes, so a content-only rotation (no
-    /// buffer-size flip, no attachment) still resets the ring and re-orients the export. nil until the
-    /// first stamp at ring creation.
+    /// Baseline interface orientation (`CGImagePropertyOrientation`) used by the watchdog to detect
+    /// rotation. The watchdog compares the current orientation against this each tick; on a change it
+    /// **restarts the capture session** so the new session begins at the new orientation's native
+    /// dimensions (upright, correct aspect). Seeded at ring creation (startBuffering /
+    /// changeBufferSeconds) and after a rotation restart. nil until the first seed.
     private var lastNotedOrientation: CGImagePropertyOrientation?
+
+    /// Whether a rotation-driven capture-session restart is in flight (stop completion pending).
+    /// Guards `restartCaptureForOrientationChange` against re-entry while the async stop→start
+    /// hand-off is underway, and tells the watchdog to skip stall checks during the restart gap.
+    private var isRestartingForOrientation = false
 
     /// Whether screen recording is available (false on Simulator, during a call, while
     /// another app is recording, etc.). There is no permission API to query in advance,
@@ -137,15 +143,25 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
             return                                         // don't throw; export side reports recordingUnavailable
         }
 
+        beginCaptureSession(seconds: seconds)
+    }
+
+    /// Create a fresh ring and start a ReplayKit capture session. The session core shared by the
+    /// initial `startBuffering` and the rotation restart (`restartCaptureForOrientationChange`).
+    /// Assumes the caller has already gated on availability and set the intent flags; it sets up the
+    /// ring, seeds the rotation baseline, marks `isCapturing`, and wires the capture handlers.
+    ///
+    /// Important: this does **not** re-check `isCapturing` — the rotation restart deliberately keeps
+    /// `isCapturing == true` across the stop→start gap (so the watchdog loop and the FAB/Controller
+    /// state don't flicker), and calls this from the stop completion to begin the new session.
+    private func beginCaptureSession(seconds: TimeInterval) {
         recorder.isMicrophoneEnabled = false               // video only (no mic permission)
         let ring = SegmentRingWriter(bufferSeconds: seconds)
         self.ring = ring
         ringHolder.set(ring)
         ringHolder.resetClock()                            // reset frame clock (avoid false triggers)
-        // Seed the UI-orientation fallback so recordings that *start* in landscape are upright from the
-        // first frame (no rotation event will arrive to set it). No-op on attachment-driven devices.
+        // Seed the rotation baseline so the watchdog only restarts on an actual change from here.
         lastNotedOrientation = Self.currentInterfaceOrientation()
-        ring.noteInterfaceOrientation(lastNotedOrientation!)
         isCapturing = true
 
         // Bind holder into a local so we don't capture self (holder is Sendable).
@@ -195,10 +211,9 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         let newRing = SegmentRingWriter(bufferSeconds: seconds)
         ring = newRing
         ringHolder.set(newRing)                            // route subsequent samples to the new ring (atomic)
-        // Seed the fresh ring with the current orientation (the old ring's fallback state doesn't carry
-        // over), so a retention change while held in landscape stays upright. No-op on attachment devices.
+        // Re-seed the rotation baseline against the fresh ring so the watchdog measures rotation from
+        // the current orientation (the new ring starts empty; the next sample sets its dimensions).
         lastNotedOrientation = Self.currentInterfaceOrientation()
-        newRing.noteInterfaceOrientation(lastNotedOrientation!)
         old?.teardown()                                    // finalize/discard the old ring (don't stop capture)
     }
 
@@ -216,6 +231,7 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         guard isCapturing else { return }                  // idempotent
         watchdog?.cancel(); watchdog = nil                 // stop frame monitoring
         isCapturing = false
+        isRestartingForOrientation = false                 // abandon any in-flight rotation restart (its start guard then bails)
         let wasConfirmed = captureConfirmed
         captureConfirmed = false
         ringHolder.set(nil)                                // drop further samples (don't touch the torn-down ring)
@@ -240,10 +256,11 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     var debugFrameAge: Double? { ringHolder.secondsSinceLastVideo() }
     /// DEBUG: whether the screen is under external capture (`UIScreen.isCaptured`).
     var debugScreenIsCaptured: Bool { Self.screenIsCaptured() }
-    /// DEBUG: format of the segments currently in the ring ("WxH@o", or "-" when empty). The "@o"
-    /// orientation tag also encodes its source: bare `u/r/l/d` = RPVideoSampleOrientationKey
-    /// attachment, starred `u*/r*/l*/d*` = UI-interface-orientation fallback (`noteInterfaceOrientation`),
-    /// `-` = no orientation source fired yet. Reflects rotation resets — a change means a reset fired.
+    /// DEBUG: format of the segments currently in the ring ("WxH@o", or "-" when empty). The "@o" tag
+    /// is the orientation from an RPVideoSampleOrientationKey attachment (`u/r/l/d`), or `-` when no
+    /// attachment has ever arrived. On a content-only-rotation device (`@-`), rotation is handled by
+    /// restarting the capture session, so the **`WxH` flipping clip-to-clip** is the visible
+    /// confirmation that rotation handling fired (each clip uses the new orientation's native size).
     var debugRingDimensions: String { ring?.debugDimensionsText ?? "-" }
     /// DEBUG: whether in-app recording itself set isCaptured this session (probe result; nil = undetermined).
     var debugInAppMarksCaptured: Bool? { inAppMarksCaptured }
@@ -306,31 +323,25 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         return scene?.screen.isCaptured ?? false
     }
 
-    // MARK: - Interface-orientation fallback (content-only rotation devices)
+    // MARK: - Rotation detection (drives the capture-session restart)
 
     /// The active window scene's current interface orientation, mapped to a
-    /// `CGImagePropertyOrientation` (see `imageOrientation(for:)`). Defaults to `.up` when no scene is
-    /// resolvable. Picks the same scene as `screenIsCaptured` (foreground-active first).
+    /// `CGImagePropertyOrientation` used purely as a **rotation-comparison key** (see
+    /// `imageOrientation(for:)`). Defaults to `.up` when no scene is resolvable. Picks the same scene
+    /// as `screenIsCaptured` (foreground-active first).
     private static func currentInterfaceOrientation() -> CGImagePropertyOrientation {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
         return imageOrientation(for: scene?.interfaceOrientation ?? .portrait)
     }
 
-    /// Map a `UIInterfaceOrientation` to the `CGImagePropertyOrientation` describing how ReplayKit's
-    /// native-portrait pixel surface is *stored* relative to upright when the device is held that way.
-    /// ReplayKit's frames are captured against the portrait surface, so a non-portrait device
-    /// orientation stores those pixels rotated; the value here is the one whose `uprightTransform`
-    /// rotates them back to standing.
-    ///
-    /// Derivation (a frame's 0th pixel row = the surface's physical top):
-    /// - `.portrait` → `.up`. Surface top is visually top; already upright.
-    /// - `.landscapeRight` → `.left`. Home indicator on the right means the device was rotated
-    ///   counter-clockwise, so the surface's physical top (row 0) now points to the viewer's left.
-    ///   Pixels stored "left" → undo with −90° (W/H swap), standing the landscape frame up.
-    /// - `.landscapeLeft` → `.right`. Mirror of the above (device rotated clockwise; row 0 points right).
-    /// - `.portraitUpsideDown` → `.down`. Surface top points down; undo with 180°.
-    /// - `.unknown` (and any future case) → `.up`. Safe identity fallback.
+    /// Map a `UIInterfaceOrientation` to a distinct `CGImagePropertyOrientation` used as a rotation
+    /// **comparison key**: the watchdog only needs to know *that* the orientation changed (each of the
+    /// four device orientations maps to a different value), to decide whether to restart the capture
+    /// session. The specific value carries no transform meaning anymore — clips are oriented by the
+    /// capture restart picking up the new native dimensions, not by a metadata transform.
+    /// - `.portrait` → `.up`, `.landscapeRight` → `.left`, `.landscapeLeft` → `.right`,
+    ///   `.portraitUpsideDown` → `.down`, `.unknown`/future → `.up` (safe default).
     static func imageOrientation(for interface: UIInterfaceOrientation) -> CGImagePropertyOrientation {
         switch interface {
         case .portrait: return .up
@@ -339,6 +350,17 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         case .portraitUpsideDown: return .down
         case .unknown: return .up
         @unknown default: return .up
+        }
+    }
+
+    /// Short human-readable label (u/r/l/d/-) for the rotation-comparison key, for restart logging only.
+    private static func orientationLabel(_ o: CGImagePropertyOrientation?) -> String {
+        switch o {
+        case .up: return "u"
+        case .right: return "r"
+        case .left: return "l"
+        case .down: return "d"
+        default: return "-"
         }
     }
 
@@ -387,22 +409,82 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 100_000_000)   // 0.1s steps (finer than the threshold, for quick detection)
                 guard let self, self.isCapturing else { return }
+                // During a rotation restart the old session is being torn down and the new one not yet
+                // up, so frames are legitimately absent: skip stall detection (which would otherwise
+                // mistake the gap for an external-capture interruption). The orientation poll is also
+                // skipped — the restart re-seeds the baseline when the new session begins.
+                guard !self.isRestartingForOrientation else { continue }
                 self.checkStall()
                 self.pollInterfaceOrientation()
             }
         }
     }
 
-    /// Forward the interface orientation to the ring when it changes (watchdog tick, recording only).
-    /// On devices that rotate only the frame content, this is the sole rotation signal — neither the
-    /// buffer size nor an attachment changes — so the ring would otherwise merge sideways frames. A
-    /// MainActor property read is cheap, so polling every 0.1s tick is fine; it also catches 180°
-    /// flips that overlay-size callbacks miss, and the ring ignores it on attachment-driven devices.
+    /// Detect a device rotation (watchdog tick, recording only) and restart the capture session so
+    /// the new session begins at the new orientation's native dimensions. On devices that rotate only
+    /// the frame content — neither the buffer size nor an attachment changes (iPhone 15 Pro / iOS
+    /// 26.5) — this poll is the sole rotation signal. A MainActor property read is cheap, so polling
+    /// every 0.1s tick is fine; it also catches 180° flips that overlay-size callbacks miss. Devices
+    /// that *do* attach RPVideoSampleOrientationKey are handled by the attachment→reset path instead,
+    /// so `restartCaptureForOrientationChange` no-ops once an attachment has been observed.
     private func pollInterfaceOrientation() {
         let current = Self.currentInterfaceOrientation()
         guard current != lastNotedOrientation else { return }
+        let previous = lastNotedOrientation
         lastNotedOrientation = current
-        ring?.noteInterfaceOrientation(current)
+        restartCaptureForOrientationChange(from: previous, to: current)
+    }
+
+    /// Restart the ReplayKit capture session in response to a rotation, so each clip is captured at
+    /// the new orientation's native resolution, upright, with correct aspect.
+    ///
+    /// Why a restart (not a metadata transform): ReplayKit freezes the buffer dimensions at the
+    /// interface orientation present when capture *started* and keeps them for the session's life. On
+    /// rotation the frame *content* doesn't rotate — it stays upright but gets anamorphically squeezed
+    /// into the frozen (wrong-aspect) buffer. No attachment arrives and the size doesn't change, so a
+    /// `preferredTransform` can't fix the already-distorted pixels. Only a fresh session picks up the
+    /// new native dimensions.
+    ///
+    /// Sequencing safety: `stopCapture` is async; a stop→**immediate** start crashes on device. So we
+    /// start the new session only inside the stop completion handler (the proven ordering from the
+    /// external-capture interrupt→resume flow). Throughout, the logical recording state stays ON
+    /// (`isCapturing` true) so the watchdog loop and FAB/Controller state don't flicker; the gap is
+    /// silent (no interrupt callback/toast — log only). `captureConfirmed` is dropped for the gap so
+    /// stall detection can't false-fire, and is re-raised by the new session's completion handler.
+    private func restartCaptureForOrientationChange(from: CGImagePropertyOrientation?,
+                                                    to: CGImagePropertyOrientation) {
+        guard isCapturing, !isRestartingForOrientation else { return }
+        // Attachment-bearing devices orient clips correctly via the attachment→reset+transform path;
+        // a restart (and its ~1s gap) is unnecessary and undesirable there. Skip if any attachment
+        // has been observed on the current ring.
+        guard ring?.hasSeenOrientationAttachment != true else { return }
+
+        isRestartingForOrientation = true
+        captureConfirmed = false                           // suppress stall detection across the gap (re-raised on restart)
+        let transition = "向き\(Self.orientationLabel(from))→\(Self.orientationLabel(to))"
+        FlashbackLog.lifecycle.info("回転を検知。capture セッションを再起動（\(transition, privacy: .public)）。直前バッファは破棄。")
+
+        ring?.teardown()                                   // discard the old-orientation buffer
+        ring = nil
+        ringHolder.set(nil)                                // drop in-flight samples until the new session starts
+
+        let seconds = desiredBufferSeconds
+        // stopCapture completion lands on a background thread; @Sendable required (no closure boxing).
+        // Hop back to MainActor and begin the new session there. Proceed even on stop error (the
+        // session may already be dead) — the goal is to come back up at the new orientation.
+        recorder.stopCapture { @Sendable error in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let error {
+                    FlashbackLog.lifecycle.info("回転再起動: stopCapture がエラーを返したが新セッションへ進む: \(error.localizedDescription, privacy: .public)")
+                }
+                self.isRestartingForOrientation = false
+                // Bail if recording was turned off / interrupted during the gap (don't revive a session
+                // the user/system stopped). beginCaptureSession re-seeds the orientation baseline.
+                guard self.isCapturing, self.wantsRecording else { return }
+                self.beginCaptureSession(seconds: seconds)
+            }
+        }
     }
 
     private func checkStall() {
@@ -541,31 +623,37 @@ final class SegmentRingWriter: @unchecked Sendable {
     private var sawOrientationAttachment = false {
         didSet { mirrorFormatForDebug() }
     }
-    /// UI-derived interface orientation (as a `CGImagePropertyOrientation`), updated via
-    /// `noteInterfaceOrientation`. This is the **fallback** signal for devices that neither flip the
-    /// buffer dimensions nor attach RPVideoSampleOrientationKey on rotation (observed on iPhone 15
-    /// Pro / iOS 26.5): only the frame *content* rotates, so the rotation must be tracked from the
-    /// app's interface orientation instead. Used as the effective orientation when no attachment has
-    /// ever arrived. Touched only on `queue`; mirrored to the HUD via `mirrorFormatForDebug`.
-    private var uiOrientation: CGImagePropertyOrientation = .up
-    /// Whether `noteInterfaceOrientation` has ever been called on this ring. Distinguishes a
-    /// UI-derived orientation from the untouched `.up` default on the HUD. Touched only on `queue`.
-    private var uiOrientationNoted = false
     /// Torn-down flag. Guards against late samples arriving after finalization recreating a segment.
     private var tornDown = false
 
+    /// Whether *any* sample seen by this ring has carried an RPVideoSampleOrientationKey attachment,
+    /// mirrored under an NSLock so `ScreenRecorder` (MainActor) can read it without hopping onto
+    /// `queue` (same pattern as RingHolder's lastVideoNanos). Drives the orientation-restart
+    /// decision: on attachment-bearing devices the attachment→reset+transform path already orients
+    /// clips correctly, so a capture-session restart is unnecessary (and its gap undesirable).
+    private let attachmentSeenLock = NSLock()
+    private var attachmentSeenMirror = false
+
+    /// Thread-safe snapshot of whether an orientation attachment has ever been observed on this ring.
+    /// Read from `ScreenRecorder` on the MainActor.
+    var hasSeenOrientationAttachment: Bool {
+        attachmentSeenLock.lock(); defer { attachmentSeenLock.unlock() }
+        return attachmentSeenMirror
+    }
+
     /// Mirror the ring's dimensions + orientation into an NSLock-guarded box (DEBUG only) so the
     /// MainActor diagnostics line can read it without hopping onto `queue` (same pattern as
-    /// RingHolder's lastVideoNanos). A no-op in Release.
+    /// RingHolder's lastVideoNanos). Also mirrors `sawOrientationAttachment` into a Release-safe box
+    /// (separate lock) for the restart decision. A no-op for the DEBUG-only HUD fields in Release.
     private func mirrorFormatForDebug() {
+        attachmentSeenLock.lock()
+        attachmentSeenMirror = sawOrientationAttachment
+        attachmentSeenLock.unlock()
         #if DEBUG
         debugDimsLock.lock()
         debugRingDimensions = ringDimensions.map { ($0.width, $0.height) }
         debugRingOrientation = ringOrientation
         debugSawOrientationAttachment = sawOrientationAttachment
-        // "UI-driven" iff no attachment was ever seen AND the interface orientation was explicitly
-        // noted at least once (otherwise the ring orientation is just the untouched `.up` default).
-        debugRingOrientationFromUI = !sawOrientationAttachment && uiOrientationNoted
         debugDimsLock.unlock()
         #endif
     }
@@ -575,33 +663,22 @@ final class SegmentRingWriter: @unchecked Sendable {
     private var debugRingDimensions: (width: Int32, height: Int32)?
     private var debugRingOrientation: CGImagePropertyOrientation?
     private var debugSawOrientationAttachment = false
-    private var debugRingOrientationFromUI = false
 
     /// DEBUG: the ring's current segment format ("WxH@o"), or "-" when the ring is empty.
-    /// The `@o` suffix is the orientation tag, whose **source** is encoded too:
-    ///  - `u`/`r`/`l`/`d` (bare) — orientation came from an RPVideoSampleOrientationKey attachment.
-    ///  - `u*`/`r*`/`l*`/`d*` (starred) — attachment never arrived; orientation is the UI-derived
-    ///    interface-orientation fallback (`noteInterfaceOrientation`). This is the expected state on
-    ///    devices that rotate only the frame content (iPhone 15 Pro etc.).
-    ///  - `-` — the ring is non-empty but no orientation source has fired yet (UI never noted, no
-    ///    attachment), so the orientation is the default `.up`.
-    /// "attachment absent" vs "attachment present == .up" (both render upright) thus stays visible.
+    /// The `@o` suffix is the orientation tag: `u`=up, `r`=right, `l`=left, `d`=down, and `@-`
+    /// when no RPVideoSampleOrientationKey attachment has ever arrived (so "attachment absent" is
+    /// visibly distinct from "attachment present and == .up", which both render upright). On a
+    /// device, `@-` while rotating means rotation is NOT signalled via this attachment — and since
+    /// the dimensions still change clip-to-clip (the capture session is restarted on rotation), the
+    /// `WxH` flipping is the visible confirmation that rotation handling fired.
     var debugDimensionsText: String {
         debugDimsLock.lock()
         let d = debugRingDimensions
         let o = debugRingOrientation
         let saw = debugSawOrientationAttachment
-        let uiDriven = debugRingOrientationFromUI
         debugDimsLock.unlock()
         guard let d else { return "-" }
-        let tag: String
-        if saw {
-            tag = Self.orientationTag(o ?? .up)             // attachment-driven: bare letter
-        } else if let o, uiDriven {
-            tag = Self.orientationTag(o) + "*"              // UI-driven fallback: starred letter
-        } else {
-            tag = "-"                                       // no source fired yet
-        }
+        let tag = saw ? Self.orientationTag(o ?? .up) : "-"
         return "\(d.width)x\(d.height)@\(tag)"
     }
 
@@ -630,31 +707,6 @@ final class SegmentRingWriter: @unchecked Sendable {
         guard type == .video else { return }               // video only
         let box = UncheckedSendableBox(value: sampleBuffer)
         queue.async { [self] in append(box.value) }
-    }
-
-    /// Feed the current UI interface orientation (mapped to a `CGImagePropertyOrientation`) as the
-    /// fallback rotation signal for devices that rotate only the frame content — no buffer-size flip,
-    /// no RPVideoSampleOrientationKey attachment (iPhone 15 Pro / iOS 26.5). Called from
-    /// `ScreenRecorder` at ring creation and from the frame-supply watchdog when the orientation
-    /// changes. Runs on `queue` to stay serialized with `append`/`startNewSegment`/`export`.
-    ///
-    /// Priority: if any attachment has ever arrived on this ring (`sawOrientationAttachment`), the
-    /// attachment is authoritative and this is **ignored entirely** — the two sources never compete.
-    /// Otherwise it updates `uiOrientation` (the effective-orientation fallback) and, when the ring
-    /// already holds frames of a different orientation, fires the same format-change reset used for
-    /// size/attachment changes (same-dimensions, orientation-only) so we never merge mismatched
-    /// segments and the export transform follows the new orientation.
-    func noteInterfaceOrientation(_ o: CGImagePropertyOrientation) {
-        queue.async { [self] in
-            guard !sawOrientationAttachment else { return }   // attachment-driven devices: ignore UI
-            uiOrientationNoted = true
-            uiOrientation = o
-            // Ring non-empty and orientation actually changed → reset (dimensions stay the same).
-            if let current = ringOrientation, current != o, let dim = ringDimensions {
-                resetForFormatChange(fromDim: dim, toDim: dim,
-                                     fromOrientation: current, toOrientation: o)
-            }
-        }
     }
 
     private func append(_ sb: CMSampleBuffer) {
@@ -721,22 +773,19 @@ final class SegmentRingWriter: @unchecked Sendable {
         ringOrientation = orientation                      // record the ring's orientation (rotation detection)
     }
 
-    /// Effective orientation of a sample buffer. Reads the RPVideoSampleOrientationKey attachment
-    /// (an `NSNumber` carrying a `CGImagePropertyOrientation` rawValue) when present: on a physical
-    /// device this is how ReplayKit *normally* signals rotation — the pixel surface stays the
-    /// native-portrait size and the value flips to .left/.right/.down as the device rotates.
-    ///
-    /// When the attachment is **absent** (older OS / Simulator synthetic frames / devices that rotate
-    /// only the content), it falls back to the UI-derived `uiOrientation` instead of a hardcoded `.up`.
-    /// This is the only orientation source on devices that neither flip the buffer dimensions nor
-    /// attach the key (iPhone 15 Pro / iOS 26.5). Attachment always wins when both are available, so
-    /// the two sources never compete (see `noteInterfaceOrientation`).
-    /// Also records that an attachment was seen, so the HUD can distinguish "absent" from "== .up".
+    /// Read the effective orientation of a sample buffer from its RPVideoSampleOrientationKey
+    /// attachment (an `NSNumber` carrying a `CGImagePropertyOrientation` rawValue). On a physical
+    /// device this is how ReplayKit signals rotation (when it signals at all): the pixel surface
+    /// stays the native-portrait size, and the value flips to .left/.right/.down as the device
+    /// rotates. When the attachment is absent (older OS / Simulator synthetic frames / devices that
+    /// don't attach the key, e.g. iPhone 15 Pro / iOS 26.5) the content is treated as `.up`; on
+    /// those devices rotation is handled by restarting the capture session instead (see
+    /// `ScreenRecorder.restartCaptureForOrientationChange`).
     private func orientation(of sb: CMSampleBuffer) -> CGImagePropertyOrientation {
         guard let raw = CMGetAttachment(sb, key: RPVideoSampleOrientationKey as CFString,
                                         attachmentModeOut: nil) as? NSNumber,
               let o = CGImagePropertyOrientation(rawValue: raw.uint32Value) else {
-            return uiOrientation                           // no attachment → UI-derived fallback (.up default)
+            return .up                                     // no attachment → treat as upright
         }
         sawOrientationAttachment = true                    // an attachment exists (HUD ground truth)
         return o

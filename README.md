@@ -345,12 +345,15 @@ These are platform realities the design works *around*, not bugs:
   or host the clip elsewhere and link to it.
 - **Claude / OpenAI can't analyze video directly** → extract keyframes, or use a
   video-native model.
-- **Rotation resets the pre-recording buffer** → segments of mixed format can't be merged
-  losslessly, so a change in either dimensions (iPad multitasking) or orientation (a phone
-  rotation, which ReplayKit signals via the sample's orientation attachment while keeping the
-  buffer size fixed) drops the ring and restarts it. The captured clip then covers only the
-  time since the new orientation, but is written upright (the export bakes in a
-  `preferredTransform` so rotated clips don't play back sideways).
+- **Rotation restarts the capture session** → ReplayKit freezes the buffer dimensions at the
+  interface orientation present when capture *started*, and on most devices a later rotation
+  doesn't change the size or rotate the frame content (it just anamorphically squeezes the
+  upright UI into the frozen buffer), so a metadata transform can't fix it. On a detected
+  rotation we therefore stop and restart the capture session (a sub-second gap; the pre-rotation
+  buffer is discarded). Each clip is then always captured at that orientation's native
+  resolution, upright, with correct aspect. (Devices that *do* signal rotation via the sample's
+  orientation attachment skip the restart and are oriented losslessly by a baked-in
+  `preferredTransform` instead.)
 
 ## Example app
 
