@@ -159,11 +159,11 @@ final class SecureOverlayHitTestTests: XCTestCase {
 
     // MARK: - scrim（自前 backdrop）表示中は空き領域タップを飲む
 
-    /// report の `.large` scrim は UIKit の `UIDimmingView` を切って window の `backgroundColor` に
-    /// 自前で描く（`updateReportBackdrop`）。dim を切るとシート上端の隙間タップが透明 window を
-    /// 素通りしてホストへ届く事故が起きるため、`PassthroughWindow.hitTest` は backgroundColor の
-    /// alpha が立っている間は素通し（nil）せず window 自身を返してタップを飲む。alpha==0（half /
-    /// 未提示）では従来どおり素通しに戻ること（既存挙動不変）も併せて確認する。
+    /// report の scrim（half/large 共通の濃さ）は UIKit の `UIDimmingView` を切って window の
+    /// `backgroundColor` に自前で描く（`updateReportBackdrop`）。dim を切るとシート上端の隙間タップが
+    /// 透明 window を素通りしてホストへ届く事故が起きるため、`PassthroughWindow.hitTest` は
+    /// backgroundColor の alpha が立っている間は素通し（nil）せず window 自身を返してタップを飲む。
+    /// alpha==0（未提示 / slide-in 前）では従来どおり素通しに戻ること（既存挙動不変）も併せて確認する。
     func testScrimSwallowsEmptyAreaTapWhilePainted() {
         let size = CGSize(width: 393, height: 852)     // iPhone 16 portrait
         let (window, root) = makeOverlay(size: size)
@@ -177,8 +177,8 @@ final class SecureOverlayHitTestTests: XCTestCase {
         XCTAssertNil(window.hitTest(p, with: nil),
                      "scrim 無し（clear）で空き領域タップが素通しされていない（既存挙動が変わっている）")
 
-        // 2) scrim 描画中（.large 相当の自前 backdrop）: 素通しせず window 自身を飲む。
-        window.backgroundColor = UIColor.black.withAlphaComponent(0.12)
+        // 2) scrim 描画中（half/large 共通の自前 backdrop）: 素通しせず window 自身を飲む。
+        window.backgroundColor = UIColor.black.withAlphaComponent(FlashbackPresenter.backdropMaxAlpha)
         let scrimHit = window.hitTest(p, with: nil)
         XCTAssertTrue(scrimHit === window,
                       "scrim 描画中に空き領域タップが飲まれず素通りしている（ホストへ届く事故）: \(String(describing: scrimHit.map { type(of: $0) }))")
@@ -205,7 +205,7 @@ final class SecureOverlayHitTestTests: XCTestCase {
         root.addSubview(button)                        // override で contentHost 配下へ
         root.layoutIfNeeded()
 
-        window.backgroundColor = UIColor.black.withAlphaComponent(0.12)   // scrim 描画中
+        window.backgroundColor = UIColor.black.withAlphaComponent(FlashbackPresenter.backdropMaxAlpha)   // scrim 描画中
         let onButton = CGPoint(x: 160, y: 322)
         let hit = window.hitTest(onButton, with: nil)
         XCTAssertNotNil(hit, "scrim 中にコンテンツボタン上で hitTest が nil（コンテンツが取れていない）")

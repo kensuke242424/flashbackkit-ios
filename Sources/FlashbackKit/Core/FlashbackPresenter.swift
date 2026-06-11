@@ -35,16 +35,18 @@ final class FlashbackPresenter {
     /// 0.58 height so that anything at or below it leaves iPhone 16 (and taller) untouched.
     static let halfDetentFloor: CGFloat = 483
 
-    /// Peak opacity of the self-drawn report backdrop at full `.large` expansion.
+    /// Opacity of the self-drawn report backdrop once the sheet has reached (or passed) its half
+    /// detent — i.e. the steady-state scrim level for **both** half and `.large`.
     ///
     /// Since the report sheet disables UIKit's own `UIDimmingView` (see
     /// `largestUndimmedDetentIdentifier` in `presentReport`), the window backdrop is the *only*
-    /// scrim, so it must match the brightness UIKit's dim would have produced rather than going to
-    /// fully black. This value is the measured alpha of a standard `UIDimmingView`: lldb-read on a
-    /// plain dimmed sheet (system dim left on) reported `backgroundColor` alpha ≈ 0.12 on
-    /// iPhone 16 / iOS 18.4. Using it makes the host show faintly through at `.large`, matching a
-    /// stock dimmed sheet instead of a black-out.
-    static let backdropMaxAlpha: CGFloat = 0.12
+    /// scrim. Per the design, half and full are scrimmed at the *same* darkness (no half→large
+    /// gradient) and that darkness is a deliberately heavier black — a conventional modal-scrim
+    /// level so the masked host clearly reads as "behind a modal". The mapping in
+    /// `updateReportBackdrop` ramps `0 → backdropMaxAlpha` only over the slide-in below the half
+    /// height and then holds flat, so this is the single constant that controls the whole scrim's
+    /// darkness; adjust it here to make the mask lighter or heavier.
+    static let backdropMaxAlpha: CGFloat = 0.4
 
     private let model = OverlayModel()
     private var window: UIWindow?
@@ -70,11 +72,10 @@ final class FlashbackPresenter {
     /// the proxy is harmless if a stop is ever missed).
     private var backdropLinkProxy: DisplayLinkProxy?
     /// Resolved height of the half (collapsed) detent, captured in the custom detent resolver.
-    /// `nil` until the first resolve. Re-captured on every layout (rotation / size change).
+    /// `nil` until the first resolve. Re-captured on every layout (rotation / size change). The
+    /// backdrop ramp is driven entirely off this (mask saturates at the half height), so the
+    /// `.large` max value is no longer needed for the scrim.
     private var reportHalfDetentHeight: CGFloat?
-    /// The sheet's maximum detent value (`.large` height), captured in the custom detent resolver
-    /// alongside the half height so progress is evaluated against the live geometry.
-    private var reportMaxDetentValue: CGFloat?
     /// Generation counter for auto-dismissing info toasts, so a stale timer never
     /// clears a newer toast.
     private var infoToastGeneration = 0
@@ -216,6 +217,17 @@ final class FlashbackPresenter {
         // capture button doesn't get captured by the OS gestures.
         let host = DeferBottomGesturesHostingController(rootView: report)
         host.modalPresentationStyle = .pageSheet
+        // Keep the status-bar icons readable at `.large`. A `.pageSheet` at `.large` covers the
+        // status bar, and UIKit otherwise drives it to `.lightContent` (white icons) on the
+        // assumption that the area behind the bar is dark — true for a normal black-backed presenter,
+        // but our overlay window is transparent over the host, which is typically a light background.
+        // That turned the WiFi / battery / time icons white and invisible (verified by screenshot;
+        // declining `modalPresentationCapturesStatusBarAppearance` alone did NOT fix it, since the
+        // covering sheet still owns the bar). So the report host *captures* status-bar appearance and
+        // returns `.default` (see `DeferBottomGesturesHostingController.preferredStatusBarStyle`),
+        // which resolves to dark icons in light mode and light icons in dark mode — i.e. it follows
+        // the host's appearance instead of forcing white. Report sheet only; other sheets unaffected.
+        host.modalPresentationCapturesStatusBarAppearance = true
         if let sheet = host.sheetPresentationController {
             // Standard .medium gets exactly filled by the recording view + trimmer, fully
             // hiding the title input below so there's no hint of "more below". A slightly
@@ -226,11 +238,10 @@ final class FlashbackPresenter {
                 // capture button, and title peek stay visible on short phones like iPhone SE), and
                 // never above the maximum. On tall phones 0.58 already wins, so they don't change.
                 let resolved = min(context.maximumDetentValue, max(context.maximumDetentValue * 0.58, Self.halfDetentFloor))
-                // Stash the resolved half height and the max (`.large`) value for the backdrop
-                // progress math. The resolver is re-invoked on every layout (rotation / size change),
-                // so these stay current without any extra observers.
+                // Stash the resolved half height for the backdrop ramp (the mask reaches full
+                // darkness at this height). The resolver is re-invoked on every layout (rotation /
+                // size change), so it stays current without any extra observers.
                 self?.reportHalfDetentHeight = resolved
-                self?.reportMaxDetentValue = context.maximumDetentValue
                 return resolved
             }
             sheet.detents = [halfDetent, .large()]
@@ -259,9 +270,9 @@ final class FlashbackPresenter {
         }
         reportDetent = detent
         reportHost = host
-        // Initial detent is half (undimmed): leave the window clear so the host shows
-        // through as intended. The backdrop darkens continuously as the sheet recedes toward
-        // `.large`, driven by the display link started below.
+        // Window starts clear (no sheet on screen yet). As the sheet slides in to the half height
+        // the backdrop fades from clear up to its steady scrim level and then holds flat through
+        // half⇄large, driven by the display link started below.
         root.present(host, animated: true)
         startReportBackdropTracking()
     }
@@ -279,15 +290,13 @@ final class FlashbackPresenter {
     /// at `.large` the receded card and the host window behind it both show through, which is the
     /// "card shrinks, host bleeds through" bug (issue #20).
     ///
-    /// Why this is *progress-driven*, not event-driven: the first fix dimmed the window black only
-    /// while the detent-change delegate reported `.large`. That delegate fires once, at settle, but
-    /// the presenting card recedes continuously in step with the drag — so the black backdrop
-    /// snapped in only after the drag finished, while the card-shrink artifact was already on screen
-    /// mid-drag (a mismatch verified in a real screen recording). Instead, a display link samples the
-    /// sheet's presentation-layer frame every frame and sets the backdrop alpha from how far the
-    /// sheet has receded between the half height and `.large`. This makes drag-follow, cancelled
-    /// swipes (progress runs back down), programmatic expand (smooth via the presentation layer),
-    /// swipe-dismiss (fades out as it drops), and slide-in (clear below the half height) all correct
+    /// Why this is *live-height-driven*, not event-driven: the detent-change delegate fires once, at
+    /// settle, but the sheet moves continuously in step with the drag. Reading the sheet's
+    /// presentation-layer frame every frame lets the backdrop track that motion. The mask is a flat
+    /// scrim from the half height up (no half→large gradient — half and `.large` are the same
+    /// darkness); the only ramp is the fade-in over the slide-in below half. Because the alpha is a
+    /// pure function of the live height, slide-in (fade-in to the steady level), half⇄large (held
+    /// flat), and swipe-dismiss (fades out as the sheet drops back below half) all come out correct
     /// for free.
     private func startReportBackdropTracking() {
         guard backdropDisplayLink == nil else { return }
@@ -307,24 +316,27 @@ final class FlashbackPresenter {
         backdropDisplayLink = nil
         backdropLinkProxy = nil
         reportHalfDetentHeight = nil
-        reportMaxDetentValue = nil
         window?.backgroundColor = .clear
     }
 
     /// One display-link tick: reads the sheet's live presented-view frame and paints the overlay
-    /// window black in proportion to how far the sheet has receded toward `.large`.
+    /// window black at a *constant* scrim level once the sheet has reached its half height.
     ///
-    /// `progress = (h_now - h_half) / (h_max - h_half)`, clamped to 0...1, where `h_now` is the live
-    /// sheet height from the presentation-layer frame (so it tracks the in-flight animation, not the
-    /// settled model value), and `h_half` / `h_max` come from the custom detent resolver.
+    /// `progress = clamp01(h_now / h_half)`, where `h_now` is the live sheet height from the
+    /// presentation-layer frame (so it tracks the in-flight animation, not the settled model value)
+    /// and `h_half` comes from the custom detent resolver. The ramp runs `0 → 1` only over the
+    /// slide-in *below* the half height; at and above half it saturates to `1`. Driving the scrim
+    /// off the half height (not the half→max span) is what makes half and `.large` the *same*
+    /// darkness — the design's "one mask, no half→large gradient": present slides the mask in
+    /// (fade-in), half⇄large holds it flat (constant), and swipe-dismiss drops the sheet back below
+    /// half so it fades out — all automatically.
     private func updateReportBackdrop() {
         guard let window,
               let presentationController = reportHost?.presentationController,
               let containerView = presentationController.containerView,
               let presentedView = presentationController.presentedView,
               let half = reportHalfDetentHeight,
-              let max = reportMaxDetentValue,
-              max > half else { return }
+              half > 0 else { return }
 
         // Use the presentation layer so the height reflects the in-flight animation position
         // (drag / spring), not the settled geometry; fall back to the model layer. Convert the
@@ -335,15 +347,15 @@ final class FlashbackPresenter {
         let topInContainer = containerView.layer.convert(CGPoint(x: 0, y: 0), from: layer)
         let heightNow = containerView.bounds.height - topInContainer.y
 
-        // Scale the recede progress (0...1) by the OS-matched peak alpha so the backdrop tops out at
-        // a standard dim level (host faintly visible at `.large`) instead of fully black.
-        let progress = ((heightNow - half) / (max - half)).clampedToUnitInterval()
+        // Ramp from clear to the steady scrim level over the slide-in up to the half height, then
+        // hold flat for everything at/above half (so half and `.large` are the same darkness).
+        let progress = (heightNow / half).clampedToUnitInterval()
         window.backgroundColor = UIColor.black.withAlphaComponent(progress * Self.backdropMaxAlpha)
     }
 
     /// Expands the report sheet to `.large`. Used before transitions that feel cramped at
-    /// half (e.g. pushing settings). The backdrop follows the expansion automatically via the
-    /// display link tracking the presentation-layer frame — no manual dimming needed here.
+    /// half (e.g. pushing settings). The backdrop needs no adjustment here: it's already at the
+    /// steady scrim level from the half height up, so half→large keeps the same darkness.
     private func expandReportSheet() {
         guard let sheet = reportHost?.sheetPresentationController else { return }
         sheet.animateChanges { sheet.selectedDetentIdentifier = .large }
@@ -654,13 +666,16 @@ final class PassthroughWindow: UIWindow {
     /// Decides what an otherwise-empty (pass-through) point should return.
     ///
     /// Normally the overlay window is transparent and empty taps fall through to the host (returns
-    /// `nil`). But the report's `.large` scrim is self-drawn onto this window's `backgroundColor`
-    /// (see `FlashbackPresenter.updateReportBackdrop`) because the sheet disables UIKit's own
+    /// `nil`). But the report scrim is self-drawn onto this window's `backgroundColor` (see
+    /// `FlashbackPresenter.updateReportBackdrop`) because the sheet disables UIKit's own
     /// `UIDimmingView`. UIKit's dim used to intercept taps in the top gap above the sheet; with it
     /// gone, those taps would pass straight through the (now visibly scrimmed) window to the host
     /// behind it — a tap landing on something the user can't even see. So while the backdrop is
     /// painted (alpha > a hair above 0), swallow the tap by returning the window itself instead of
-    /// `nil`. At alpha ~0 (half detent / no sheet) it returns `nil` exactly as before, leaving the
+    /// `nil`. Since the scrim is now a flat mask from the half detent up (not just `.large`), this
+    /// means empty-area taps are swallowed at the **half** detent too — the natural consequence of
+    /// the host being masked there; it is no longer tappable through the scrim. Only at alpha ~0
+    /// (no sheet, or the slide-in/out tails below half) does it return `nil` as before, leaving the
     /// established pass-through behavior unchanged.
     private func passthroughOrScrim() -> UIView? {
         if let alpha = backgroundColor?.cgColor.alpha, alpha > 0.01 { return self }
@@ -907,8 +922,15 @@ private struct ToastCapsule<Content: View>: View {
 /// switching, and the up swipe) by one beat. Lets the capture button at the bottom of the report's
 /// trimmer be scrubbed via bottom-edge dragging without the OS hijacking the gesture (it requires a
 /// second swipe to fire).
+///
+/// It also governs the status-bar appearance at `.large` (the sheet covers the bar there). It
+/// returns `.default` so the icons resolve to dark in light mode / light in dark mode — following
+/// the host's appearance instead of UIKit's reflexive `.lightContent` (which white-outs the icons
+/// over our transparent overlay window on a light host). Paired with
+/// `modalPresentationCapturesStatusBarAppearance = true` in `presentReport`.
 private final class DeferBottomGesturesHostingController<Content: View>: UIHostingController<Content> {
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge { .bottom }
+    override var preferredStatusBarStyle: UIStatusBarStyle { .default }
 }
 
 #else
