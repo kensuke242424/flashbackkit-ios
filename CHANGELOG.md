@@ -7,6 +7,28 @@ the [Releases](https://github.com/kensuke242424/flashbackkit-ios/releases) page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions
 are pre-1.0 and bump the minor for each release.
 
+## [0.12.0] - 2026-06-12
+
+### Added
+- **Secure-text-entry privacy guard** — capture now pauses automatically while a secure
+  text field (`isSecureTextEntry`) is being edited, and quietly resumes with a fresh
+  buffer when editing ends (the floating button turns grey for the duration). iOS's
+  secure-field blanking protects *external* captures (OS screen recording / mirroring)
+  only — measured on device, the SDK's in-app capture recorded the masked dots, the
+  per-keystroke last-character preview, and revealed text. SwiftUI's `SecureField` is
+  covered (it is backed by `UITextField`). Opt out via
+  `FlashbackConfiguration(pausesDuringSecureTextEntry: false)`, or per device with the
+  new settings toggle ("Keep recording during password entry") when you need to capture
+  evidence of a bug around password entry.
+
+### Fixed
+- Save / share stopped working after a background round-trip while a report was on
+  screen: the capture restart on returning to the foreground purged every `flashback-*`
+  temp file — including the already-exported clip backing the presented ReportView — so
+  the share sheet received a dead file URL. The purge (meant to clean leftovers from a
+  *previous* launch) now runs at most once per process. The external-capture and
+  secure-entry resumes shared the same path and are covered by the same fix.
+
 ## [0.11.0] - 2026-06-12
 
 ### Fixed
