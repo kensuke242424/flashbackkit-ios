@@ -83,6 +83,11 @@ What does an always-on ring buffer cost? Measured on an iPhone 15 Pro (iOS 26.5)
 frame — the hardest possible content for H.264), identical except recording OFF vs ON.
 Thermal state stayed nominal throughout:
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/perf-soak-dark.svg">
+  <img src="docs/perf-soak-light.svg" alt="20-minute soak, recording OFF then ON: memory steps from 77 to 94 MB and stays flat, CPU from 12.5% to 19.2% of one core, UI frame rate unchanged at 59 fps, ring disk usage climbs then plateaus at 75 MB" width="100%">
+</picture>
+
 | | Recording OFF | Recording ON | Net cost of the SDK |
 |---|---|---|---|
 | Memory (median) | 77 MB | 94 MB | **+17 MB — flat over 10 min, no leak** |
