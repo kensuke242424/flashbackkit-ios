@@ -7,6 +7,23 @@ the [Releases](https://github.com/kensuke242424/flashbackkit-ios/releases) page.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions
 are pre-1.0 and bump the minor for each release.
 
+## [0.10.0] - 2026-06-12
+
+### Fixed
+- **#21** — crash (EXC_BREAKPOINT) when returning to the foreground with recording on, in
+  hosts whose AppDelegate is `@MainActor`-isolated (Swift 6 dynamic isolation checks):
+  replayd's auto-resume callback (`shouldResumeSessionType:`) walked
+  `-[RPScreenRecorder applicationWindow]` on an XPC queue, reading the host's
+  `AppDelegate.window` getter off-main. Capture is now stopped on entering the background
+  and quietly restarted on returning to the foreground, so ReplayKit never has a live
+  session to offer a resume for.
+
+### Changed
+- Backgrounding now discards the in-memory ring buffer: after returning to the foreground
+  the "last N seconds" start fresh (no pre-background footage). The screen was never
+  captured while backgrounded, so only pre-background context is affected. No interrupt /
+  resume toast is shown for this path — backgrounding is a user-initiated lifecycle event.
+
 ## [0.9.0] - 2026-06-12
 
 ### Added

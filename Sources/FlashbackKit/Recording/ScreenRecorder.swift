@@ -121,6 +121,17 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(screenCaptureStateChanged),
             name: UIScreen.capturedDidChangeNotification, object: nil)
+        // Stop capture across backgrounding (and resume on return) so ReplayKit never has a
+        // session to auto-resume: replayd's resume callback (`shouldResumeSessionType:`) walks
+        // `-[RPScreenRecorder applicationWindow]` on an XPC queue, which reads the host's
+        // `AppDelegate.window` getter off-main and traps under a `@MainActor`-isolated
+        // AppDelegate (Swift 6 dynamic isolation checks). See issue #21.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(appWillEnterForeground),
+            name: UIApplication.willEnterForegroundNotification, object: nil)
         #if DEBUG
         // Diagnostic: snapshot the recording state at the moment of foreground resume
         // after being idle (DEBUG only).
@@ -314,6 +325,33 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         FlashbackLog.lifecycle.info("\(reason, privacy: .public). Auto-resuming recording.")
         startBuffering(seconds: desiredBufferSeconds)
         onExternalCaptureInterrupt?(false)                 // resume toast
+    }
+
+    // MARK: - Background / foreground (avoid ReplayKit's auto-resume path — issue #21)
+
+    /// Pause capture on backgrounding. With no live session at suspension time, replayd has
+    /// nothing to offer a resume for, so the off-main `applicationWindow` walk never runs.
+    /// Same teardown semantics as the external-capture interruption (discard the ring; the
+    /// screen isn't captured while backgrounded anyway), but **silent** — no interrupt toast,
+    /// since backgrounding is a normal lifecycle event the user initiated.
+    ///
+    /// Residual risk: `stopCapture` is async fire-and-forget; if the app suspends before
+    /// replayd processes the stop, the resume query can still arrive on return. The foreground
+    /// handler below re-starting a fresh session keeps even that case consistent.
+    @objc private func appDidEnterBackground() {
+        guard isCapturing else { return }
+        FlashbackLog.lifecycle.info("App entered background. Stopping capture to avoid ReplayKit auto-resume (the buffer restarts empty on return).")
+        interruptedBySystem = true                         // mark for auto-resume on foreground
+        teardownCapture(notify: true)                      // confirmed off + stop session + discard ring
+    }
+
+    /// Quietly restart capture on foreground return when recording intent remains. Mirrors
+    /// `attemptResume` minus the resume toast (no interrupt toast was shown on the way out).
+    @objc private func appWillEnterForeground() {
+        guard interruptedBySystem, wantsRecording, !isCapturing, !Self.screenIsCaptured() else { return }
+        interruptedBySystem = false
+        FlashbackLog.lifecycle.info("App returning to foreground. Restarting capture (fresh buffer).")
+        startBuffering(seconds: desiredBufferSeconds)
     }
 
     /// Whether the screen is being captured externally (OS screen recording / AirPlay / mirroring).
