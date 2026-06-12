@@ -203,6 +203,8 @@ private struct DummyGalleryTab: View {
 /// Kept here to keep Home tidy (also presentable right after launch via env vars).
 private struct DebugTab: View {
     @State private var resetNote: String?
+    @State private var secureFieldText = ""
+    @State private var plainFieldText = ""
 
     var body: some View {
         NavigationStack {
@@ -295,6 +297,28 @@ private struct DebugTab: View {
                             .multilineTextAlignment(.center)
                             .transition(.opacity)
                     }
+
+                    // Secure-input capture test: verifies what the SDK's own clip (ReplayKit
+                    // in-app capture) actually records. iOS blanks secure text fields from
+                    // *external* captures (OS recording / mirroring), but in-app capture renders
+                    // the app's own content and may not get that protection. While recording,
+                    // type into 1 / 2 / 4, then trigger a report and inspect the exported clip.
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Secure input capture test")
+                            .font(.headline)
+                        SecureField("1: SwiftUI SecureField", text: $secureFieldText)
+                            .textFieldStyle(.roundedBorder)
+                        SecureUIKitField()
+                            .frame(height: 34)
+                        SecureLayerTrickView()
+                            .frame(height: 34)
+                        TextField("4: plain TextField (control)", text: $plainFieldText)
+                            .textFieldStyle(.roundedBorder)
+                        Text("Check the clip for: the dots, the last-typed-character preview, and whether the red label (3) appears.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.top, 12)
                 }
                 .padding(16)
                 .animation(.easeInOut, value: resetNote)
@@ -307,6 +331,53 @@ private struct DebugTab: View {
             .navigationTitle("Debug")
         }
     }
+}
+
+/// 2: a genuine UIKit `UITextField` with `isSecureTextEntry`, to compare against SwiftUI's
+/// `SecureField` (1) in the capture test (their backing views could behave differently).
+private struct SecureUIKitField: UIViewRepresentable {
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField()
+        field.isSecureTextEntry = true
+        field.borderStyle = .roundedRect
+        field.placeholder = "2: UIKit isSecureTextEntry"
+        return field
+    }
+    func updateUIView(_ uiView: UITextField, context: Context) {}
+}
+
+/// 3: the README's "secure-layer trick" — a label hosted inside a secure text field's internal
+/// canvas layer (visible to the user, expected to be excluded from OS captures). Placed here to
+/// test whether the SDK's own in-app capture excludes it as well.
+private struct SecureLayerTrickView: UIViewRepresentable {
+    /// Container keeping the field/label alive (the trick only moves *layers*; the views must
+    /// stay retained or the label's layer contents could go stale).
+    final class TrickContainer: UIView { var retained: [UIView] = [] }
+
+    func makeUIView(context: Context) -> TrickContainer {
+        let container = TrickContainer()
+        let size = CGRect(x: 0, y: 0, width: 300, height: 34)
+
+        let field = UITextField(frame: size)
+        field.isSecureTextEntry = true
+        field.isUserInteractionEnabled = false
+        container.addSubview(field)
+
+        let label = UILabel(frame: size)
+        label.text = "3: SECRET via secure-layer trick"
+        label.font = .boldSystemFont(ofSize: 15)
+        label.textColor = .systemRed
+        label.textAlignment = .center
+
+        // README recipe: host the content's layer inside the secure field's canvas layer.
+        if let secureCanvas = field.layer.sublayers?.first {
+            secureCanvas.addSublayer(label.layer)
+            label.layer.frame = size
+        }
+        container.retained = [field, label]
+        return container
+    }
+    func updateUIView(_ uiView: TrickContainer, context: Context) {}
 }
 #endif
 

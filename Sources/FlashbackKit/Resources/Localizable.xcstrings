@@ -1,6 +1,17 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "\"Keep recording during password entry\": normally recording pauses while a password field is edited so secrets stay out of the clip. When on, the field's content (including the briefly shown last-typed character) is recorded — use it only to capture a bug around password entry." : {
+      "comment" : "SettingsView: debug-section footer explaining the secure-entry guard toggle and its risk.",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「パスワード入力中も録画を続ける」：通常はパスワード欄の編集中、秘密がクリップに写らないよう録画を一時停止します。オンにすると欄の内容（入力中に一瞬表示される末尾の文字を含む）が録画されます。パスワード入力まわりの不具合を録りたいときだけオンにしてください。"
+          }
+        }
+      }
+    },
     "%lld sec" : {
       "comment" : "SettingsView: retention option label, e.g. \"20 sec\".",
       "localizations" : {
@@ -155,13 +166,13 @@
         }
       }
     },
-    "iOS asks to confirm screen recording" : {
-      "comment" : "PermissionPrimingView: accessibility hint that the OS prompt will appear.",
+    "Keep recording during password entry" : {
+      "comment" : "SettingsView: debug-section toggle that disables the secure-entry privacy guard (on = keep recording while a password field is edited).",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "iOS の画面収録の確認が表示されます"
+            "value" : "パスワード入力中も録画を続ける"
           }
         }
       }
@@ -331,6 +342,17 @@
         }
       }
     },
+    "Recording is off" : {
+      "comment" : "ReportView: caption in the dormant placeholder box.",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "録画はオフです"
+          }
+        }
+      }
+    },
     "Recording isn't available on this device" : {
       "comment" : "ReportView: caption in the unavailable placeholder box.",
       "localizations" : {
@@ -353,13 +375,13 @@
         }
       }
     },
-    "Recording is off" : {
-      "comment" : "ReportView: caption in the dormant placeholder box.",
+    "Recording length to keep" : {
+      "comment" : "SettingsView: header for the retention-length section.",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "録画はオフです"
+            "value" : "保持する録画の長さ"
           }
         }
       }
@@ -448,68 +470,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "再試行"
-          }
-        }
-      }
-    },
-    "section.recording" : {
-      "comment" : "SettingsView: header for the recording (permission) section. English: \"Recording\".",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recording"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "録画"
-          }
-        }
-      }
-    },
-    "settings.enableRecording" : {
-      "comment" : "SettingsView: button to re-enable recording when off. English: \"Enable recording\".",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enable recording"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "録画を有効にする"
-          }
-        }
-      }
-    },
-    "report.enableRecording" : {
-      "comment" : "ReportView: CTA in the dormant (recording off) empty state. English: \"Enable recording\".",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Enable recording"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "録画をオンにする"
-          }
-        }
-      }
-    },
-    "Recording length to keep" : {
-      "comment" : "SettingsView: header for the retention-length section.",
-      "localizations" : {
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "保持する録画の長さ"
           }
         }
       }
@@ -701,6 +661,17 @@
         }
       }
     },
+    "When \"Confirm permission on launch\" is on, screen-recording permission is confirmed right after launch. (Due to iOS, a persistent always-allow in Settings isn't possible.)" : {
+      "comment" : "SettingsView: footer for the recording (permission) section.",
+      "localizations" : {
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「アプリ起動時に権限を確認する」をオンにすると、起動直後に画面収録の許可を確認します。（iOS の仕様上、設定での常時許可はできません。）"
+          }
+        }
+      }
+    },
     "When you choose \"Allow\" on the next iOS prompt, your latest in-app activity is kept automatically." : {
       "comment" : "PermissionPrimingView: explanatory body of the priming sheet.",
       "localizations" : {
@@ -712,13 +683,64 @@
         }
       }
     },
-    "When \"Confirm permission on launch\" is on, screen-recording permission is confirmed right after launch. (Due to iOS, a persistent always-allow in Settings isn't possible.)" : {
-      "comment" : "SettingsView: footer for the recording (permission) section.",
+    "iOS asks to confirm screen recording" : {
+      "comment" : "PermissionPrimingView: accessibility hint that the OS prompt will appear.",
       "localizations" : {
         "ja" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "「アプリ起動時に権限を確認する」をオンにすると、起動直後に画面収録の許可を確認します。（iOS の仕様上、設定での常時許可はできません。）"
+            "value" : "iOS の画面収録の確認が表示されます"
+          }
+        }
+      }
+    },
+    "report.enableRecording" : {
+      "comment" : "ReportView: CTA in the dormant (recording off) empty state. English: \"Enable recording\".",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable recording"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "録画をオンにする"
+          }
+        }
+      }
+    },
+    "section.recording" : {
+      "comment" : "SettingsView: header for the recording (permission) section. English: \"Recording\".",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recording"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "録画"
+          }
+        }
+      }
+    },
+    "settings.enableRecording" : {
+      "comment" : "SettingsView: button to re-enable recording when off. English: \"Enable recording\".",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable recording"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "録画を有効にする"
           }
         }
       }

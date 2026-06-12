@@ -57,6 +57,12 @@ final class FlashbackController {
         // persisted toggle, else the config default (false). Only start the launch buffer when on.
         let promptOnLaunch = (UserDefaults.standard.object(forKey: FlashbackSettingsStore.promptOnLaunchKey) as? Bool)
             ?? configuration.promptOnLaunch
+        // Privacy guard: whether capture pauses while a secure text field is edited.
+        // Prefer the persisted settings toggle ("keep recording during password entry" =
+        // the inverse), else the config default. Applied before any capture can start.
+        let recordsDuringSecureEntry = (UserDefaults.standard.object(forKey: FlashbackSettingsStore.recordsDuringSecureEntryKey) as? Bool)
+            ?? !configuration.pausesDuringSecureTextEntry
+        recorder.setPausesForSecureTextEntry(!recordsDuringSecureEntry)
         if promptOnLaunch {
             recorder.startBuffering(seconds: bufferSeconds)
         }
@@ -80,6 +86,7 @@ final class FlashbackController {
             retentionSeconds: Int(bufferSeconds),
             promptOnLaunch: promptOnLaunch,
             excludesButtonFromCapture: excludesButtonFromCapture,
+            recordsDuringSecureEntry: recordsDuringSecureEntry,
             isRecordingActive: recorder.isRecording,
             isRecordingAvailable: { [weak self] in self?.recorder.isAvailable ?? false },
             onFloatingButtonVisibleChanged: { [weak self] in self?.setFloatingButton($0) },
@@ -87,7 +94,9 @@ final class FlashbackController {
             onRetryRecording: { [weak self] in self?.retryRecording() },
             onStopRecording: { [weak self] in self?.recorder.stopBuffering() },
             onPromptOnLaunchChanged: { [weak self] in self?.setPromptOnLaunch($0) },
-            onExcludesButtonFromCaptureChanged: { [weak self] in self?.presenter.setExcludesContentFromCapture($0) }
+            onExcludesButtonFromCaptureChanged: { [weak self] in self?.presenter.setExcludesContentFromCapture($0) },
+            // Settings toggle is the inverse of the guard (on = keep recording = guard off).
+            onRecordsDuringSecureEntryChanged: { [weak self] in self?.recorder.setPausesForSecureTextEntry(!$0) }
         )
         // Mirror the confirmed recording state (true only after permission) into the store,
         // so the UI updates automatically.
@@ -302,6 +311,7 @@ final class FlashbackController {
             retentionSeconds: settingsStore?.retentionSeconds ?? 20,
             promptOnLaunch: false,
             excludesButtonFromCapture: settingsStore?.excludesButtonFromCapture ?? true,
+            recordsDuringSecureEntry: settingsStore?.recordsDuringSecureEntry ?? false,
             isRecordingActive: false,
             isRecordingAvailable: { false },
             onFloatingButtonVisibleChanged: { _ in },
@@ -309,7 +319,8 @@ final class FlashbackController {
             onRetryRecording: {},
             onStopRecording: {},
             onPromptOnLaunchChanged: { _ in },
-            onExcludesButtonFromCaptureChanged: { _ in }
+            onExcludesButtonFromCaptureChanged: { _ in },
+            onRecordsDuringSecureEntryChanged: { _ in }
         )
         presenter.presentReport(clipURL: nil, onShare: { _, _ in nil }, settings: stub)
     }

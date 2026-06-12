@@ -76,10 +76,11 @@ reproduce it?" round-trips.
   built-in editor; the title and device info are baked into the exported file.
 - **One handoff point** — a single `onReport` callback gives you the trimmed clip, the
   title, and device info. Route it anywhere. *The SDK's job ends at "here's the report."*
-- **Unfiltered by design** — iOS excludes secure text fields from the recording for free,
-  but masking everything else is the host app's responsibility (see
-  [Privacy](#privacy--masking-sensitive-data)). The SDK does not redact the recording
-  itself.
+- **Unfiltered by design — except passwords** — the clip records everything the app
+  renders, and masking is the host app's responsibility (see
+  [Privacy](#privacy--masking-sensitive-data)). The one built-in guard: capture **pauses
+  automatically while a secure text field is being edited**, so passwords stay out of the
+  clip.
 
 ## How it works
 
@@ -313,14 +314,24 @@ Screen recording captures **everything on screen** (customer names, tokens, inve
 FlashbackKit deliberately does **not** intercept the recording pipeline — masking is the
 host app's responsibility, because only the host knows what's sensitive.
 
-- **Password fields are handled for free.** iOS automatically excludes
-  `isSecureTextEntry = true` `UITextField`s from ReplayKit and screenshots.
+- **Password entry pauses recording automatically.** The clip is recorded via ReplayKit
+  **in-app** capture, which sees everything the app renders: iOS's secure-field blanking
+  protects *external* captures (OS screen recording, mirroring) only and does **not**
+  apply here (measured on device — the dots, the per-keystroke last-character preview,
+  and revealed text all land in the clip otherwise). So the SDK pauses capture while a
+  secure text field (`isSecureTextEntry`) is being edited and quietly resumes with a
+  fresh buffer when editing ends — the floating button turns grey for the duration.
+  SwiftUI's `SecureField` is covered (it is backed by `UITextField`). Opt out via
+  `FlashbackConfiguration(pausesDuringSecureTextEntry: false)`.
+  **Not covered:** a password *revealed* via an eye toggle (the field is no longer secure
+  at that moment) — stop recording around such screens instead.
 - **Everything else is up to you.** The most reliable approach is to use dummy data in QA
   builds, or not show sensitive screens while recording (you can call `Flashback.stop()`
   to suspend capture before one).
-- **Secure-layer trick (unofficial).** Hosting a view inside a secure text field's layer
-  keeps it visible to the user but excluded from capture. Behavior varies by iOS version,
-  so prefer the operational approach when certainty matters.
+- **Secure-layer trick (OS captures only).** Hosting a view inside a secure text field's
+  layer keeps it visible to the user but excluded from **OS** screenshots / recording /
+  mirroring. It does **not** hide the content from FlashbackKit's own clip — in-app
+  capture renders it regardless (measured on device) — so don't rely on it for the clip.
 
   ```swift
   // Host-side utility (not part of FlashbackKit).
@@ -355,6 +366,10 @@ These are platform realities the design works *around*, not bugs:
   or host the clip elsewhere and link to it.
 - **Claude / OpenAI can't analyze video directly** → extract keyframes, or use a
   video-native model.
+- **In-app capture isn't covered by iOS's secure-field blanking** → the OS hides
+  `isSecureTextEntry` fields from *external* captures (screen recording / mirroring), not
+  from an app recording itself. FlashbackKit therefore pauses capture during secure text
+  entry (see [Privacy](#privacy--masking-sensitive-data)).
 - **Rotation restarts the capture session** → ReplayKit freezes the buffer dimensions at the
   interface orientation present when capture *started*, and on most devices a later rotation
   doesn't change the size or rotate the frame content (it just anamorphically squeezes the

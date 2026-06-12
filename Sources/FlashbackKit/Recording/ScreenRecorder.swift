@@ -45,6 +45,20 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     /// path's resume toast would misreport a normal lifecycle round-trip (#22). Cleared by
     /// the didBecomeActive restart.
     private var pausedForBackground = false
+
+    /// Whether the secure-text-entry privacy guard is enabled (config default ⊕ settings
+    /// toggle, via `setPausesForSecureTextEntry`). The in-app capture path sees everything
+    /// the app renders — iOS's secure-field blanking protects external captures only — so by
+    /// default capture pauses while a secure field is being edited, keeping passwords out
+    /// of the clip.
+    private(set) var pausesForSecureTextEntry = true
+    /// Tracks which secure fields are currently being edited (begin/end editing notifications).
+    private let secureEntryTracker = SecureEntryTracker()
+    /// Whether capture is paused because a secure field is being edited. Separate from the
+    /// background/interrupt flags for the same reason they are separate from each other:
+    /// each pause has its own resume condition and consuming another path's flag strands
+    /// recording off (#22).
+    private var pausedForSecureEntry = false
     /// Last requested retention seconds, kept so auto-resume restarts with the same value.
     private var desiredBufferSeconds: TimeInterval = 0
 
@@ -149,6 +163,24 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(appDidBecomeActive),
             name: UIApplication.didBecomeActiveNotification, object: nil)
+        // Privacy guard: pause capture while a secure text field is edited. The in-app
+        // capture path gets neither the OS's secure-field blanking (external captures only)
+        // nor the secure-canvas exclusion — measured on device — so without this, passwords
+        // (dots, per-keystroke preview, revealed text) land in the clip. Editing
+        // notifications fire app-wide for any UIKit-backed input, including SwiftUI's
+        // SecureField (backed by UITextField).
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(textEditingBegan(_:)),
+            name: UITextField.textDidBeginEditingNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(textEditingEnded(_:)),
+            name: UITextField.textDidEndEditingNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(textEditingBegan(_:)),
+            name: UITextView.textDidBeginEditingNotification, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(textEditingEnded(_:)),
+            name: UITextView.textDidEndEditingNotification, object: nil)
         #if DEBUG
         // Diagnostic: snapshot the recording state at the moment of foreground resume
         // after being idle (DEBUG only).
@@ -388,8 +420,75 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
             }
             return
         }
+        // Secure-entry pause whose end-editing arrived while inactive: resume now that
+        // startCapture can succeed (no-op while a secure field is still being edited).
+        resumeAfterSecureEntryIfNeeded()
         // Not a background pause: pick up an external-capture resume deferred while inactive.
         attemptResume(reason: "External capture cleared while the app was inactive")
+    }
+
+    // MARK: - Secure-text-entry privacy guard
+
+    /// Begin-editing for any UITextField/UITextView (fires on main). On the first secure
+    /// field gaining focus (count 0 → 1) while recording, pauses capture so the password —
+    /// the masked dots, the per-keystroke last-character preview, and anything revealed —
+    /// never lands in the clip. Silent apart from the floating button turning gray.
+    /// Tracking runs even while the guard is off, so toggling the guard on mid-edit can
+    /// reconcile against the current focus (`setPausesForSecureTextEntry`).
+    @objc private func textEditingBegan(_ note: Notification) {
+        guard secureEntryTracker.noteBeginEditing(note.object) else { return }
+        guard pausesForSecureTextEntry, isCapturing else { return }
+        FlashbackLog.lifecycle.info("Secure text entry began. Pausing capture (the buffer restarts after editing ends).")
+        pausedForSecureEntry = true
+        teardownCapture(notify: true)              // confirmed off (FAB gray) + stop session + discard ring
+    }
+
+    /// End-editing counterpart: once no secure field is being edited, resumes quietly with a
+    /// fresh buffer. Tracking is independent of `pausesForSecureTextEntry` so a field
+    /// already counted keeps its end-editing paired even if the flag were toggled mid-edit.
+    @objc private func textEditingEnded(_ note: Notification) {
+        guard secureEntryTracker.noteEndEditing(note.object) else { return }
+        resumeAfterSecureEntryIfNeeded()
+    }
+
+    /// Restart capture after a secure-entry pause, when conditions allow. Deferred to
+    /// `appDidBecomeActive` when the app isn't active (keyboard dismissal can arrive
+    /// mid-backgrounding, where `startCapture` would fail — same rationale as #22).
+    private func resumeAfterSecureEntryIfNeeded() {
+        guard pausedForSecureEntry, !secureEntryTracker.isEditingSecure else { return }
+        guard UIApplication.shared.applicationState == .active else { return }   // didBecomeActive retries
+        guard wantsRecording, !isCapturing else { pausedForSecureEntry = false; return }
+        pausedForSecureEntry = false
+        if Self.screenIsCaptured() {
+            // External capture took over during the pause: hand over to that machinery
+            // (its end triggers the usual toast-bearing resume).
+            interruptedBySystem = true
+            return
+        }
+        FlashbackLog.lifecycle.info("Secure text entry ended. Restarting capture (fresh buffer).")
+        startBuffering(seconds: desiredBufferSeconds)
+    }
+
+    /// Updates the secure-entry guard at runtime (config default at start, then the settings
+    /// toggle) and reconciles the current state on the spot: re-enabling while a secure field
+    /// is being edited pauses immediately; disabling while paused resumes immediately (the
+    /// tester explicitly chose capturing evidence around password entry over privacy).
+    func setPausesForSecureTextEntry(_ enabled: Bool) {
+        guard pausesForSecureTextEntry != enabled else { return }
+        pausesForSecureTextEntry = enabled
+        if enabled {
+            if secureEntryTracker.isEditingSecure, isCapturing {
+                FlashbackLog.lifecycle.info("Secure-entry guard re-enabled mid-edit. Pausing capture.")
+                pausedForSecureEntry = true
+                teardownCapture(notify: true)
+            }
+        } else if pausedForSecureEntry {
+            pausedForSecureEntry = false
+            guard wantsRecording, !isCapturing, !Self.screenIsCaptured(),
+                  UIApplication.shared.applicationState == .active else { return }
+            FlashbackLog.lifecycle.info("Secure-entry guard disabled while paused. Restarting capture.")
+            startBuffering(seconds: desiredBufferSeconds)
+        }
     }
 
     /// Whether the screen is being captured externally (OS screen recording / AirPlay / mirroring).
@@ -1105,6 +1204,8 @@ final class SegmentRingWriter: @unchecked Sendable {
 final class ScreenRecorder {
     var isAvailable: Bool { false }
     var isRecording: Bool { false }
+    private(set) var pausesForSecureTextEntry = true
+    func setPausesForSecureTextEntry(_ enabled: Bool) { pausesForSecureTextEntry = enabled }
     var onCaptureStarted: ((Bool) -> Void)?
     var onRecordingStateChanged: ((Bool) -> Void)?
     func startBuffering(seconds: TimeInterval) {}

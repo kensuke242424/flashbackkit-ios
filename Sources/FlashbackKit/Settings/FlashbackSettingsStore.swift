@@ -61,6 +61,19 @@ final class FlashbackSettingsStore: ObservableObject {
         }
     }
 
+    /// Whether to keep recording while a secure text field (password entry) is being
+    /// edited. **Default false** = the privacy guard pauses capture so passwords stay out
+    /// of the clip. Turn on only to capture evidence of bugs around password entry — the
+    /// field's content (including the per-keystroke preview character) then appears in the
+    /// clip. Changes are persisted to UserDefaults and applied immediately by the
+    /// Controller (a mid-edit toggle pauses/resumes on the spot).
+    @Published var recordsDuringSecureEntry: Bool {
+        didSet {
+            UserDefaults.standard.set(recordsDuringSecureEntry, forKey: Self.recordsDuringSecureEntryKey)
+            onRecordsDuringSecureEntryChanged(recordsDuringSecureEntry)
+        }
+    }
+
     /// Whether the screen-recording priming was already shown once (once per device).
     /// Once `true`, "turn on recording" goes straight to the OS prompt (retry) without
     /// priming. A plain flag with no SDK side effects, so it reads/writes UserDefaults
@@ -87,6 +100,7 @@ final class FlashbackSettingsStore: ObservableObject {
     static let hasPrimedKey = "FlashbackKit.hasPrimedScreenRecording"
     static let hasSeenShakeHintKey = "FlashbackKit.hasSeenShakeHint"
     static let excludesButtonFromCaptureKey = "FlashbackKit.excludesButtonFromCapture"
+    static let recordsDuringSecureEntryKey = "FlashbackKit.recordsDuringSecureEntry"
 
     private let onFloatingButtonVisibleChanged: (Bool) -> Void
     private let onRetentionChanged: (Int) -> Void
@@ -94,12 +108,14 @@ final class FlashbackSettingsStore: ObservableObject {
     private let onStopRecording: () -> Void
     private let onPromptOnLaunchChanged: (Bool) -> Void
     private let onExcludesButtonFromCaptureChanged: (Bool) -> Void
+    private let onRecordsDuringSecureEntryChanged: (Bool) -> Void
 
     init(
         floatingButtonVisible: Bool,
         retentionSeconds: Int,
         promptOnLaunch: Bool,
         excludesButtonFromCapture: Bool,
+        recordsDuringSecureEntry: Bool,
         isRecordingActive: Bool,
         isRecordingAvailable: @escaping () -> Bool,
         onFloatingButtonVisibleChanged: @escaping (Bool) -> Void,
@@ -107,12 +123,14 @@ final class FlashbackSettingsStore: ObservableObject {
         onRetryRecording: @escaping () -> Void,
         onStopRecording: @escaping () -> Void,
         onPromptOnLaunchChanged: @escaping (Bool) -> Void,
-        onExcludesButtonFromCaptureChanged: @escaping (Bool) -> Void
+        onExcludesButtonFromCaptureChanged: @escaping (Bool) -> Void,
+        onRecordsDuringSecureEntryChanged: @escaping (Bool) -> Void
     ) {
         self.floatingButtonVisible = floatingButtonVisible
         self.retentionSeconds = retentionSeconds
         self.promptOnLaunch = promptOnLaunch            // init assignment doesn't trigger didSet (no persist/side effect)
         self.excludesButtonFromCapture = excludesButtonFromCapture
+        self.recordsDuringSecureEntry = recordsDuringSecureEntry
         self.isRecordingActive = isRecordingActive
         self.isRecordingAvailable = isRecordingAvailable
         self.onFloatingButtonVisibleChanged = onFloatingButtonVisibleChanged
@@ -121,6 +139,7 @@ final class FlashbackSettingsStore: ObservableObject {
         self.onStopRecording = onStopRecording
         self.onPromptOnLaunchChanged = onPromptOnLaunchChanged
         self.onExcludesButtonFromCaptureChanged = onExcludesButtonFromCaptureChanged
+        self.onRecordsDuringSecureEntryChanged = onRecordsDuringSecureEntryChanged
     }
 
     /// Retries recording (`startCapture`). Used for granting permission after a denial

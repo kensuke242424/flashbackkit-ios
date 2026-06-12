@@ -56,10 +56,20 @@ struct SettingsView: View {
                 Text("Show the launch button in OS screenshots and recordings", bundle: .module)
             }
             .tint(FlashbackColor.success)
+            // Escape hatch for the secure-entry privacy guard: keep recording while a
+            // password field is edited, to capture evidence of bugs around password entry.
+            // Default off (guard active). Mid-edit toggles take effect immediately.
+            Toggle(isOn: $store.recordsDuringSecureEntry) {
+                Text("Keep recording during password entry", bundle: .module)
+            }
+            .tint(FlashbackColor.success)
         } header: {
             Text("Debug", bundle: .module)
         } footer: {
-            Text("Usually unnecessary. Turn this on only when you want the launch button to appear in OS screenshots/recordings, e.g. for documentation.", bundle: .module)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Usually unnecessary. Turn this on only when you want the launch button to appear in OS screenshots/recordings, e.g. for documentation.", bundle: .module)
+                Text("\"Keep recording during password entry\": normally recording pauses while a password field is edited so secrets stay out of the clip. When on, the field's content (including the briefly shown last-typed character) is recorded — use it only to capture a bug around password entry.", bundle: .module)
+            }
         }
     }
 

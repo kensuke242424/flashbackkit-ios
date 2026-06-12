@@ -28,6 +28,18 @@ public struct FlashbackConfiguration: Sendable {
     /// on first run, when no persisted value exists).
     public var promptOnLaunch: Bool
 
+    /// Whether to pause capture while a secure text field (`isSecureTextEntry`) is being
+    /// edited. **Default true.**
+    ///
+    /// The SDK's clip is recorded via ReplayKit *in-app* capture, which sees everything the
+    /// app renders: iOS's secure-field blanking protects **external** captures (OS screen
+    /// recording / mirroring) only, so without this guard a password lands in the clip —
+    /// masked dots, the per-keystroke last-character preview, and anything revealed. While
+    /// the guard is active, recording pauses when a secure field gains focus (the floating
+    /// button turns gray) and silently resumes with a fresh buffer when editing ends.
+    /// Opt out only when your QA flow never types real secrets while recording.
+    public var pausesDuringSecureTextEntry: Bool
+
     /// Whether to run on the Simulator. **Default false**: ReplayKit in-app capture doesn't
     /// actually work on the Simulator (it reports success but emits no frames), so
     /// `Flashback.start()` does nothing there (no FAB,
@@ -46,6 +58,7 @@ public struct FlashbackConfiguration: Sendable {
         triggers: FlashbackTrigger = .default,
         floatingButtonCorner: FloatingButtonCorner = .bottomTrailing,
         promptOnLaunch: Bool = false,
+        pausesDuringSecureTextEntry: Bool = true,
         runsOnSimulator: Bool = false
     ) {
         self.bufferSeconds = bufferSeconds
@@ -53,6 +66,7 @@ public struct FlashbackConfiguration: Sendable {
         self.triggers = triggers
         self.floatingButtonCorner = floatingButtonCorner
         self.promptOnLaunch = promptOnLaunch
+        self.pausesDuringSecureTextEntry = pausesDuringSecureTextEntry
         self.runsOnSimulator = runsOnSimulator
     }
 }
