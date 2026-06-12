@@ -48,6 +48,13 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
     /// Last requested retention seconds, kept so auto-resume restarts with the same value.
     private var desiredBufferSeconds: TimeInterval = 0
 
+    /// Whether the once-per-launch purge of leftover temp files has run. The purge targets
+    /// `flashback-*` leftovers from a *previous* process, but `startBuffering` also runs on
+    /// every resume (background round-trip, external-capture end, secure-entry end). Purging
+    /// there deletes the already-exported clip backing a presented ReportView — save/share
+    /// then operate on a dead file URL — so the purge must fire at most once per process.
+    private static var didPurgeStaleTempFiles = false
+
     /// Watchdog monitoring frame supply. Stops as an interruption if supply stalls
     /// during external capture.
     private var watchdog: Task<Void, Never>?
@@ -156,7 +163,10 @@ final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
         wantsRecording = true                              // intent to record (for auto-resume decisions)
         desiredBufferSeconds = seconds
         inAppMarksCaptured = nil                            // re-probe device traits this session
-        SegmentRingWriter.purgeTempFiles()                 // clean up leftovers from last run
+        if !Self.didPurgeStaleTempFiles {                  // once per launch: leftovers from the last run
+            Self.didPurgeStaleTempFiles = true             // (resume restarts must NOT purge — see flag doc)
+            SegmentRingWriter.purgeTempFiles()
+        }
 
         guard isAvailable else {                           // Simulator / unsupported (Sim pinned false above)
             FlashbackLog.lifecycle.info("Screen recording unavailable (Simulator or unsupported environment). Continuing without a clip.")
