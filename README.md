@@ -50,9 +50,18 @@ reproduce it?" round-trips.
   the title and device info are baked into the exported file.
 - **One handoff point** — a single `onReport` callback delivers the trimmed clip, title,
   and device info. Everything downstream (AI, Slack, Jira, backend) is yours.
+- **Rotation & iPad ready** — rotate mid-recording and the clip still comes out upright
+  at the new orientation's native resolution; the floating button re-clamps itself on
+  rotation and iPad-multitasking resizes. Verified on iPhone (down to SE / iOS 16.4) and
+  iPad.
 - **Unfiltered by design — except passwords** — masking is the host app's job (see
   [Privacy](#privacy--masking-sensitive-data)), but capture pauses automatically while a
   secure text field is being edited.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/coverage-dark.svg">
+  <img src="docs/coverage-light.svg" alt="Left: rotate mid-recording and clips come out upright at each orientation's native resolution. Right: device coverage — iPhone SE (iOS 16.4), iPhone, and iPad with Split View; the floating button re-clamps on rotation and resizes" width="100%">
+</picture>
 
 ## How it works
 
@@ -246,8 +255,9 @@ that state:
   sheet explains the screen-recording permission, then iOS asks.
 - **Orange (recording on)** — long-press (0.4 s) to open the report; a short tap shows a
   "long-press to open" hint instead of doing nothing.
-- **Drag** to reposition; it snaps to the nearest edge and can tuck away. VoiceOver:
-  double-tap activates the state-appropriate action.
+- **Drag** to reposition; it snaps to the nearest edge and can tuck away. It re-clamps
+  itself on rotation and window resizes (iPad multitasking), then returns to its saved
+  spot. VoiceOver: double-tap activates the state-appropriate action.
 
 When the floating button is turned off, a one-time "shake twice to open" hint tells
 testers the shake trigger is still available.
